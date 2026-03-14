@@ -43,16 +43,12 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Password must be at least 6 characters" }, { status: 400 });
     }
 
-    // Check if email or phone already exists
-    console.log("Checking for existing user with email or phone:", email, phone);
+    // Check if email already exists
+    console.log("Checking for existing user with email:", email);
     const existingEmail = await User.findOne({ email: email.toLowerCase().trim() });
-    const existingPhone = await User.findOne({ phone: phone.trim() });
 
     if (existingEmail) {
       return NextResponse.json({ error: "Email already registered" }, { status: 400 });
-    }
-    if (existingPhone) {
-      return NextResponse.json({ error: "Phone number already registered" }, { status: 400 });
     }
 
     // Doctor validation

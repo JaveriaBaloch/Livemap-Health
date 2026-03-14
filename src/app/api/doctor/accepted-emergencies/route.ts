@@ -33,90 +33,32 @@ export async function GET(request: NextRequest) {
     }
 
     try {
-      // Debug: Check if there are any emergencies with acceptedBy field
-      console.log('API: Querying all emergencies for debugging...');
-      const allEmergencies = await Emergency.find({}).select('_id acceptedBy status reporterName').limit(5);
-      console.log('API: Sample emergencies in DB:', allEmergencies.map(e => ({
-        id: e._id.toString(),
-        acceptedBy: e.acceptedBy?.toString(),
-        status: e.status,
-        reporterName: e.reporterName
-      })));
-
-      // Find emergencies where this doctor has accepted the case
-      // Using status 'responded' with acceptedBy field since 'accepted' status causes validation errors
-      console.log('API: Searching for emergencies accepted by doctor:', doctorId);
-      console.log('API: Doctor ID type:', typeof doctorId);
-      
       // Convert string doctorId to ObjectId for proper matching
       const doctorObjectId = new Types.ObjectId(doctorId);
       console.log('API: Doctor ObjectId:', doctorObjectId);
-      
-      // First, let's see all emergencies with acceptedBy field set (regardless of doctor)
-      const allAcceptedEmergencies = await Emergency.find({
-        acceptedBy: { $exists: true, $ne: null }
-      }).select('_id acceptedBy status reporterName acceptedAt').limit(10);
-      
-      console.log('API: All emergencies with acceptedBy field:', allAcceptedEmergencies.map(e => ({
-        id: e._id.toString(),
-        acceptedBy: e.acceptedBy?.toString(),
-        status: e.status,
-        reporterName: e.reporterName,
-        acceptedAt: e.acceptedAt
-      })));
-      
-      // Now let's try different query approaches with ObjectId
-      const query1 = await Emergency.find({
-        acceptedBy: doctorObjectId,
-        status: { $in: ['responded', 'resolved', 'in-progress', 'en-route', 'arrived'] }
-      }).limit(5);
-      
-      const query2 = await Emergency.find({
-        acceptedBy: doctorObjectId
-      }).limit(5);
-      
-      const query3 = await Emergency.find({
-        status: 'responded'
-      }).limit(5);
-      
-      // Also try string comparison
-      const queryString = await Emergency.find({
-        acceptedBy: doctorId
-      }).limit(5);
-      
-      console.log('API: Query1 (ObjectId acceptedBy + status):', query1.length, 'results');
-      console.log('API: Query2 (ObjectId acceptedBy only):', query2.length, 'results');
-      console.log('API: Query3 (responded status only):', query3.length, 'results');
-      console.log('API: QueryString (string acceptedBy):', queryString.length, 'results');
-      
+
+      // Find emergencies where this doctor has accepted/responded (either field)
       const acceptedEmergencies = await Emergency.find({
-        acceptedBy: doctorObjectId,
-        status: { $in: ['responded', 'resolved', 'in-progress', 'en-route', 'arrived'] }
+        status: { $in: ['responded', 'accepted'] },
+        $or: [
+          { acceptedBy: doctorObjectId },
+          { respondedDoctors: doctorObjectId }
+        ]
       })
-      .populate('userId', 'name phone bloodGroup allergies medicalConditions age')
-      .populate('reportedBy', 'name phone bloodGroup allergies medicalConditions age')
-      .sort({ acceptedAt: -1 }) // Most recently accepted first
-      .limit(20); // Limit to prevent huge responses
+        .populate('userId', 'name phone bloodGroup allergies medicalConditions age')
+        .populate('reportedBy', 'name phone bloodGroup allergies medicalConditions age')
+        .sort({ acceptedAt: -1 }) // Most recently accepted first
+        .limit(20); // Limit to prevent huge responses
 
-      console.log('API: Found accepted emergencies:', acceptedEmergencies.length);
-
-      console.log('API: Found accepted emergencies:', acceptedEmergencies.length);
+      if (!acceptedEmergencies.length) {
+        console.warn('API: No accepted emergencies found for doctor:', doctorId);
+      }
 
       // Format the emergencies for the frontend
       const formattedEmergencies = acceptedEmergencies.map((emergency, index) => {
         try {
           // Use populated userId first, then reportedBy, then stored fields
           const patientData = emergency.userId || emergency.reportedBy;
-          console.log(`API: Processing emergency ${index + 1}:`, {
-            id: emergency._id?.toString(),
-            patientData: patientData ? {
-              name: patientData.name,
-              phone: patientData.phone
-            } : 'No patient data',
-            storedPatientName: emergency.patientName,
-            storedReporterName: emergency.reporterName
-          });
-          
           return {
             id: emergency._id.toString(),
             patientId: (emergency.userId as any)?._id?.toString() || (emergency.reportedBy as any)?._id?.toString() || emergency.userId?.toString() || emergency.reportedBy?.toString(),
@@ -139,8 +81,6 @@ export async function GET(request: NextRequest) {
           return null;
         }
       }).filter(Boolean); // Remove any null entries
-
-      console.log('API: Successfully formatted emergencies:', formattedEmergencies.length);
 
       return NextResponse.json({
         success: true,

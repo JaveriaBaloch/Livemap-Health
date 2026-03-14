@@ -47,8 +47,7 @@ export async function POST(req: NextRequest) {
     await sendResetEmail(email, resetCode);
 
     return NextResponse.json({ 
-      message: "Password reset code sent to your email",
-      phone: phone
+      message: "Password reset code sent to your email"
     }, { status: 200 });
 
   } catch (error: any) {
