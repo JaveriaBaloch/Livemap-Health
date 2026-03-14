@@ -1,0 +1,24 @@
+"use client";
+import { useState, useEffect } from "react";
+import { useAppStore } from "@/lib/store";
+import { WelcomeScreen, AuthScreen, PatientDashboard, DoctorDashboard, SpecialistSearch, PharmacySearch, DirectionsMap, EmergencySOS, EmergencyResponse, ProfileScreen } from "@/components/screens";
+import type { ActiveScreen, Specialist, EmergencyData, AcceptedDoctor } from "@/types";
+export default function Home() {
+  const { user, setUser, getCurrentLocation } = useAppStore(); const [mounted, setMounted] = useState(false); const [welcome, setWelcome] = useState(true); const [screen, setScreen] = useState<ActiveScreen>("dashboard"); const [dirT, setDirT] = useState<Specialist | null>(null); const [accEm, setAccEm] = useState<EmergencyData | null>(null); const [dirBack, setDirBack] = useState<ActiveScreen>("dashboard");
+  useEffect(() => { (async () => { setMounted(true); try { const t = localStorage.getItem("token"); if (t && !user) { const r = await fetch("/api/auth/validate", { method: "POST", headers: { "Content-Type": "application/json", Authorization: `Bearer ${t}` } }); if (r.ok) setUser((await r.json()).user); else localStorage.removeItem("token"); } if (!localStorage.getItem("livemap_welcome_complete") && !user) setWelcome(true); else setWelcome(false); getCurrentLocation(); } catch { localStorage.removeItem("token"); } })(); }, []);
+  const logout = async () => { try { await fetch("/api/auth/logout", { method: "POST", headers: { Authorization: `Bearer ${localStorage.getItem("token")}` } }); } catch {} localStorage.removeItem("token"); localStorage.removeItem("user"); setUser(null); setScreen("dashboard"); };
+  const openDir = (s: Specialist, b: ActiveScreen = "dashboard") => { setDirT(s); setDirBack(b); setScreen("directions"); };
+  const openEmDir = (e: EmergencyData) => { if (!e.latitude || !e.longitude) { alert("Location not available"); return; } setDirT({ place_id: e.id || `em-${Date.now()}`, name: e.patientName || "Patient", rating: 0, user_ratings_total: 0, vicinity: e.address || "Patient location", formatted_phone_number: e.phoneNumber || e.reporterPhone, types: ["emergency"], geometry: { location: { lat: e.latitude, lng: e.longitude } }, formatted_distance: e.formatted_distance || "Emergency" }); setDirBack("emergency-response"); setScreen("directions"); };
+  if (!mounted) return <div className="min-h-screen bg-[#f8fafc] flex items-center justify-center text-[#1e293b]">Loading…</div>;
+  if (welcome) return <WelcomeScreen onComplete={() => setWelcome(false)} />;
+  if (!user) return <AuthScreen />;
+  if (screen === "profile") return <ProfileScreen onBack={() => setScreen("dashboard")} onLogout={logout} />;
+  if (screen === "directions" && dirT) return <DirectionsMap specialist={dirT} onBack={() => { if (user.role === "doctor" && accEm) setScreen("emergency-response"); else setScreen(dirBack); }} />;
+  if (screen === "specialist-search") return <SpecialistSearch onBack={() => setScreen("dashboard")} onGetDirections={(s) => openDir(s, "specialist-search")} />;
+  if (screen === "pharmacy-search") return <PharmacySearch onBack={() => setScreen("dashboard")} onGetDirections={(s) => openDir(s, "pharmacy-search")} />;
+  if (screen === "emergency-sos") return <EmergencySOS onBack={() => setScreen("dashboard")} />;
+  if (screen === "emergency-response" && accEm && user.role === "doctor") return <EmergencyResponse emergency={accEm} onBack={() => { setAccEm(null); setScreen("dashboard"); }} onGetDirections={openEmDir} />;
+  if (user.role === "doctor") return <DoctorDashboard onAcceptEmergency={(e) => { setAccEm(e); setScreen("emergency-response"); }} onGetDirections={openEmDir} onViewAccepted={(e) => { setAccEm(e); setScreen("emergency-response"); }} onOpenProfile={() => setScreen("profile")} />;
+  if ((user.role as string) !== "emergency-patient") return <PatientDashboard onNavigate={setScreen} onOpenProfile={() => setScreen("profile")} onTrackDoctor={(_s, d) => { if (!d.location?.lat || !d.location?.lng) { alert("Doctor location not available yet."); return; } openDir({ place_id: `doc-${d.doctorId || Date.now()}`, name: `Dr. ${d.doctorName || "Doctor"}`, rating: 0, user_ratings_total: 0, vicinity: d.specialization || "En route", formatted_phone_number: d.phone, types: ["doctor"], geometry: { location: { lat: d.location.lat, lng: d.location.lng } }, formatted_distance: d.estimatedArrival || "Nearby" }, "dashboard"); }} />;
+  return <EmergencySOS onBack={() => setScreen("dashboard")} />;
+}

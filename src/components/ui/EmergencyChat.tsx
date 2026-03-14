@@ -1,0 +1,25 @@
+"use client";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useAppStore } from "@/lib/store";
+const eid = (v: unknown): string => { if (!v) return ""; if (typeof v === "string") return v; if (typeof v === "object" && v !== null && "$oid" in (v as any)) return String((v as any).$oid); return String(v); };
+interface Props { emergencyId: string; otherUserId: string; otherUserName: string; onClose: () => void; title?: string; }
+export default function EmergencyChat({ emergencyId, otherUserId, otherUserName, onClose, title = "Emergency Chat" }: Props) {
+  const { user } = useAppStore(); const [chatId, setChatId] = useState<string | null>(null); const [messages, setMessages] = useState<any[]>([]); const [input, setInput] = useState(""); const [loading, setLoading] = useState(true); const [error, setError] = useState(""); const scrollRef = useRef<HTMLDivElement>(null);
+  const load = useCallback(async (id: string) => { try { const r = await fetch(`/api/chat/${id}`); if (r.ok) setMessages((await r.json()).messages || []); } catch {} }, []);
+  useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages]);
+  useEffect(() => { let c = false; (async () => { const my = eid(user?._id), oi = eid(otherUserId), ei = eid(emergencyId); if (!my || !oi || !ei) { setError("Missing info."); setLoading(false); return; } try { const lr = await fetch(`/api/chat?userId=${encodeURIComponent(my)}&type=emergency`); if (!lr.ok) throw 0; const ex = ((await lr.json()).chats || []).find((ch: any) => String(ch.emergencyId) === ei); if (ex?._id) { if (!c) { setChatId(ex._id); await load(ex._id); } setLoading(false); return; } const cr = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "emergency", name: `Emergency #${ei.slice(-6)}`, participants: [my, oi], participantNames: [user?.name || "User", otherUserName], emergencyId: ei }) }); const cd = await cr.json(); if (!cr.ok) { setError("Failed."); setLoading(false); return; } if (!c && cd.chat?._id) { setChatId(cd.chat._id); await load(cd.chat._id); } } catch { setError("Unable to open chat."); } finally { if (!c) setLoading(false); } })(); return () => { c = true; }; }, [emergencyId, otherUserId, otherUserName, user, load]);
+  useEffect(() => { if (!chatId) return; const i = setInterval(() => load(chatId), 3000); return () => clearInterval(i); }, [chatId, load]);
+  const send = async () => { if (!chatId || !input.trim() || !user?._id) return; await fetch("/api/chat", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId, senderId: eid(user._id), senderName: user.name, senderRole: user.role, content: input.trim(), type: "text" }) }); setInput(""); await load(chatId); };
+  if (loading) return <div className="bg-[#f1f5f9] rounded-xl p-6 text-center text-[#94a3b8] text-sm">Opening chat…</div>;
+  if (error || !chatId) return <div className="bg-[#f1f5f9] rounded-xl p-4 text-center"><p className="text-[#ef4444] text-sm mb-2">{error || "Unable to open chat."}</p><button onClick={onClose} className="text-xs text-[#94a3b8] hover:text-[#1e293b] underline">Close</button></div>;
+  return (
+    <div className={title ? "bg-white border border-[#e2e8f0] rounded-xl p-4 shadow-sm" : ""}>
+      {title && <div className="flex items-center justify-between mb-3"><p className="text-sm font-semibold text-[#8b5cf6] font-[Outfit]">{title}</p><button onClick={onClose} className="text-xs text-[#94a3b8] hover:text-[#1e293b]">Close</button></div>}
+      <div ref={scrollRef} className="h-52 overflow-y-auto bg-[#f8fafc] rounded-xl p-3 mb-3 space-y-2.5">
+        {messages.length === 0 ? <p className="text-[#94a3b8] text-sm text-center pt-8">No messages yet</p> : messages.map((m: any) => { const me = eid(m.senderId) === eid(user?._id); return (
+          <div key={m._id} className={`flex ${me ? "justify-end" : "justify-start"}`}><div className={`max-w-[80%] px-3.5 py-2.5 rounded-2xl text-sm ${me ? "bg-[#3b82f6] text-white rounded-br-md" : "bg-white text-[#1e293b] rounded-bl-md border border-[#e2e8f0] shadow-sm"}`}>{!me && <p className="text-xs text-[#8b5cf6] mb-1 font-medium">{m.senderName}</p>}<p>{m.content}</p></div></div>
+        ); })}
+      </div>
+      <div className="flex gap-2"><input value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} placeholder="Type a message…" className="flex-1 bg-[#f1f5f9] border border-[#e2e8f0] rounded-xl px-4 py-2.5 text-sm text-[#1e293b] placeholder:text-[#94a3b8] focus:outline-none focus:border-[#3b82f6] transition-colors" /><button onClick={send} className="bg-[#8b5cf6] hover:bg-[#7c3aed] text-white px-5 py-2.5 rounded-xl text-sm font-medium transition-colors">Send</button></div>
+    </div>);
+}
