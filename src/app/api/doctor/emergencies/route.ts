@@ -140,25 +140,10 @@ export async function POST(request: NextRequest) {
 
     console.log('🔥 Doctor emergency response:', {
       doctorId,
-      emergencyId, 
+      emergencyId,
       action,
       doctorIdType: typeof doctorId,
       emergencyIdType: typeof emergencyId
-    });
-
-    if (!doctorId || !emergencyId || !action) {
-      console.error('❌ Missing required fields:', { doctorId: !!doctorId, emergencyId: !!emergencyId, action: !!action });
-      return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
-    }
-
-    // Get doctor info
-    console.log('🔥 Looking up doctor with ID:', doctorId);
-    const doctor = await User.findById(doctorId);
-    console.log('🔥 Doctor found:', {
-      found: !!doctor,
-      id: doctor?._id?.toString(),
-      name: doctor?.name,
-      role: doctor?.role
     });
     
     if (!doctor || doctor.role !== 'doctor') {
@@ -211,28 +196,16 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'Emergency not found' }, { status: 404 });
         }
 
-        console.log('Emergency before update:', {
-          id: existingEmergency._id.toString(),
-          status: existingEmergency.status,
-          acceptedBy: existingEmergency.acceptedBy?.toString() || 'undefined',
-          acceptedAt: existingEmergency.acceptedAt || 'undefined'
-        });
-
         // Use findByIdAndUpdate with explicit field setting
-        console.log('Using findByIdAndUpdate for better field persistence...');
-        console.log('Setting acceptedBy to:', doctor._id.toString(), 'type:', typeof doctor._id);
-        
         const updateData = {
-          status: 'responded',
+          status: 'accepted',
           acceptedBy: doctor._id,
           acceptedAt: new Date(),
           $addToSet: {
             respondedDoctors: doctor._id
           }
         };
-        
-        console.log('Update data being sent:', JSON.stringify(updateData, null, 2));
-        
+
         const updateResult = await Emergency.findByIdAndUpdate(
           emergencyId,
           updateData,
@@ -243,98 +216,22 @@ export async function POST(request: NextRequest) {
           }
         );
 
-        console.log('Update result:', {
-          found: !!updateResult,
-          id: updateResult?._id?.toString(),
-          status: updateResult?.status,
-          acceptedBy: updateResult?.acceptedBy?.toString() || 'undefined',
-          acceptedAt: updateResult?.acceptedAt || 'undefined',
-          respondedDoctors: updateResult?.respondedDoctors?.map(id => id.toString()) || []
-        });
-
         if (!updateResult) {
-          console.error('findByIdAndUpdate returned null');
           return NextResponse.json({ error: 'Failed to update emergency' }, { status: 500 });
         }
 
-        // Force a direct database read to verify the update persisted
-        console.log('Performing direct database verification...');
-        const rawVerification = await Emergency.collection.findOne(
-          { _id: updateResult._id },
-          { projection: { _id: 1, status: 1, acceptedBy: 1, acceptedAt: 1, respondedDoctors: 1 } }
-        );
-        
-        console.log('Raw database verification result:', rawVerification);
-
-        if (!rawVerification?.acceptedBy) {
-          console.error('CRITICAL: acceptedBy field not persisted to database!');
-          console.error('Attempting direct collection update...');
-          
-          // Try a raw collection update as fallback
-          const directUpdate = await Emergency.collection.updateOne(
-            { _id: updateResult._id },
-            {
-              $set: {
-                status: 'responded',
-                acceptedBy: doctor._id,
-                acceptedAt: new Date()
-              },
-              $addToSet: {
-                respondedDoctors: doctor._id
-              }
-            }
-          );
-          
-          console.log('Direct collection update result:', directUpdate);
-          
-          // Verify the direct update worked
-          const finalCheck = await Emergency.collection.findOne(
-            { _id: updateResult._id },
-            { projection: { _id: 1, status: 1, acceptedBy: 1, acceptedAt: 1 } }
-          );
-          
-          console.log('Final verification after direct update:', finalCheck);
-          
-          if (!finalCheck?.acceptedBy) {
-            return NextResponse.json({ error: 'Critical database update failure' }, { status: 500 });
-          }
-        }
-
-        const savedEmergency = updateResult;
-        
-        console.log('Emergency after save:', {
-          id: savedEmergency._id.toString(),
-          status: savedEmergency.status,
-          acceptedBy: savedEmergency.acceptedBy?.toString() || 'undefined',
-          acceptedAt: savedEmergency.acceptedAt || 'undefined'
-        });
-
         // Double check by querying again with raw result
         const verifyEmergency = await Emergency.findById(emergencyId).lean();
-        console.log('Final verification query (raw):', verifyEmergency);
-        console.log('Final verification query result:', {
-          id: verifyEmergency?._id?.toString(),
-          status: verifyEmergency?.status,
-          acceptedBy: verifyEmergency?.acceptedBy?.toString() || 'undefined',
-          acceptedAt: verifyEmergency?.acceptedAt || 'undefined'
-        });
-
         if (!verifyEmergency?.acceptedBy) {
-          console.error('CRITICAL: Emergency update did not persist to database!');
           return NextResponse.json({ error: 'Failed to persist emergency acceptance' }, { status: 500 });
         }
 
-        const updatedEmergency = savedEmergency;
+        const updatedEmergency = updateResult;
 
         // Populate the reportedBy field for response
         await updatedEmergency.populate('reportedBy', 'name phone bloodGroup allergies medicalConditions age');
 
       } catch (updateError) {
-        console.error('❌ Error during emergency update:', updateError);
-        console.error('❌ Error stack:', updateError.stack);
-        console.error('❌ Error name:', updateError.name);
-        console.error('❌ Error message:', updateError.message);
-        
         return NextResponse.json({ 
           error: 'Failed to update emergency', 
           details: updateError.message,
@@ -362,18 +259,8 @@ export async function POST(request: NextRequest) {
         success: true,
         message: 'Emergency accepted successfully',
         emergency: {
-          id: updatedEmergency._id.toString(),
-          patientId: updatedEmergency.reportedBy?._id?.toString() || updatedEmergency.reportedBy?.toString() || updatedEmergency.userId?.toString(),
-          status: updatedEmergency.status,
-          patientName: updatedEmergency.reportedBy?.name || updatedEmergency.reporterName,
-          phoneNumber: updatedEmergency.reportedBy?.phone || updatedEmergency.reporterPhone,
-          age: updatedEmergency.reportedBy?.age,
-          bloodGroup: updatedEmergency.reportedBy?.bloodGroup || updatedEmergency.healthData?.bloodGroup,
-          allergies: updatedEmergency.reportedBy?.allergies || updatedEmergency.healthData?.allergies || [],
-          medicalConditions: updatedEmergency.reportedBy?.medicalConditions || updatedEmergency.healthData?.conditions || [],
-          latitude: updatedEmergency.location?.coordinates?.[1] || updatedEmergency.latitude,
-          longitude: updatedEmergency.location?.coordinates?.[0] || updatedEmergency.longitude,
-          description: updatedEmergency.description,
+          id: emergencyId,
+          status: 'accepted',
           acceptedDoctor: {
             id: doctor._id,
             name: doctor.name,

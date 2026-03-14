@@ -1,39 +1,36 @@
+
 import { NextRequest, NextResponse } from "next/server";
-import dbConnect from "@/lib/mongodb";
-import User from "@/models/User";
-import { sendSMSVerification } from "@/lib/firebase";
+import { sendEmailVerification } from "@/lib/firebase";
 
-export async function POST(req: NextRequest) {
   try {
-    await dbConnect();
-    const { phone } = await req.json();
+    const { email } = await req.json();
 
-    if (!phone) {
-      return NextResponse.json({ error: "Phone number is required" }, { status: 400 });
+    if (!email) {
+      return NextResponse.json({ error: "Email is required" }, { status: 400 });
     }
 
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes
 
-    // Send OTP via SMS using Firebase
+    // Send OTP via Email
     const message = `Your LiveMap verification code is: ${otp}. This code will expire in 10 minutes.`;
     try {
-      const smsSuccess = await sendSMSVerification(phone, message);
-      if (smsSuccess) {
-        console.log(`Firebase SMS sent successfully to ${phone}: ${otp}`);
+      const emailSuccess = await sendEmailVerification(email, otp, false);
+      if (emailSuccess) {
+        console.log(`Email sent successfully to ${email}: ${otp}`);
       } else {
-        console.log(`Firebase SMS failed, using fallback - OTP for ${phone}: ${otp}`);
+        console.log(`Email failed, using fallback - OTP for ${email}: ${otp}`);
       }
-    } catch (smsError: any) {
-      console.error("Firebase SMS sending failed:", smsError);
+    } catch (emailError: any) {
+      console.error("Email sending failed:", emailError);
       // Fallback: log OTP for development
-      console.log(`Fallback - OTP for ${phone}: ${otp}`);
+      console.log(`Fallback - OTP for ${email}: ${otp}`);
     }
 
     // Store temporary OTP (you might want to use Redis or similar for this)
     const tempUser = {
-      phone,
+      email,
       otp,
       otpExpiry,
       isWelcome: true
@@ -42,11 +39,11 @@ export async function POST(req: NextRequest) {
     // For demo, we'll store in a global variable or use a simple cache
     // In production, use proper session management
     global.tempWelcomeOtp = global.tempWelcomeOtp || {};
-    global.tempWelcomeOtp[phone] = tempUser;
+    global.tempWelcomeOtp[email] = tempUser;
 
     return NextResponse.json({ 
-      message: "Welcome to LiveMap! Please verify your phone number with the OTP sent via SMS.",
-      phone: phone
+      message: "Welcome to LiveMap! Please verify your email with the OTP sent to your inbox.",
+      email: email
     }, { status: 200 });
 
   } catch (error: any) {

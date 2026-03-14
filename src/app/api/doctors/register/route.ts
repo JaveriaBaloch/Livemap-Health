@@ -16,7 +16,8 @@ async function getMongoClient() {
 
 export async function POST(request: NextRequest) {
   try {
-    const { name, specialization, phone, email, location, isAvailable = true } = await request.json();
+
+    const { name, specialization, email, location, isAvailable = true } = await request.json();
 
     if (!name || !location) {
       return NextResponse.json({ error: 'Name and location are required' }, { status: 400 });
@@ -24,19 +25,18 @@ export async function POST(request: NextRequest) {
 
     const mongoClient = await getMongoClient();
     const db = mongoClient.db(DATABASE_NAME);
-    
+
     const doctor = {
       _id: new ObjectId(),
       name,
       specialization: specialization || 'General Practice',
-      phone: phone || '+1-555-0000',
       email: email || `${name.toLowerCase().replace(' ', '.')}@hospital.com`,
       location: {
         type: 'Point',
-        coordinates: [location.lng, location.lat] // MongoDB format: [longitude, latitude]
+        coordinates: [location.lng, location.lat]
       },
       isAvailable,
-      rating: Math.random() * (5.0 - 4.0) + 4.0, // Random rating between 4.0-5.0
+      rating: Math.random() * (5.0 - 4.0) + 4.0,
       createdAt: new Date(),
       updatedAt: new Date()
     };
@@ -103,7 +103,6 @@ export async function GET(request: NextRequest) {
         id: doc._id.toString(),
         name: doc.name,
         specialization: doc.specialization,
-        phone: doc.phone,
         email: doc.email,
         rating: doc.rating,
         location: {

@@ -250,15 +250,16 @@ export async function PUT(req: NextRequest) {
       return NextResponse.json({ error: "Emergency not found" }, { status: 404 });
     }
 
-    if (action === "respond" && doctorId) {
-      // Doctor responds to emergency
+    if ((action === "respond" || action === "accepted" || action === "accept") && doctorId) {
+      // Doctor responds or accepts emergency
+      const newStatus = action === "accepted" || action === "accept" ? "accepted" : "responded";
       await Emergency.findByIdAndUpdate(emergencyId, {
         $addToSet: { respondedDoctors: doctorId },
-        status: "responded",
+        status: newStatus,
       });
 
       if (pusher) {
-        await pusher.trigger(`emergency-${emergencyId}`, "doctor-responded", { doctorId });
+        await pusher.trigger(`emergency-${emergencyId}`, "doctor-responded", { doctorId, status: newStatus });
       }
     } else if (action === "resolve") {
       await Emergency.findByIdAndUpdate(emergencyId, {
