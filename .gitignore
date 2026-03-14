@@ -1,0 +1,9 @@
+node_modules/
+.next/
+out/
+.env.local
+.env
+android/
+ios/
+*.apk
+.DS_Store
