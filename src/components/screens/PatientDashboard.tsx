@@ -1,10 +1,12 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "@/lib/store";
 import { useChatNotifications } from "@/lib/useChatNotifications";
 import EmergencyChat from "@/components/ui/EmergencyChat";
 import NotificationSidebar, { NotificationBell } from "@/components/ui/NotificationSidebar";
 import AIChatbot from "@/components/ui/AIChatbot";
+import StatusToast from "@/components/ui/StatusToast";
+import type { StatusNotification } from "@/lib/useEmergencyStatusNotifications";
 import type { ActiveScreen, EmergencyData, AcceptedDoctor } from "@/types";
 
 interface Props {
@@ -13,33 +15,110 @@ interface Props {
   onTrackDoctor: (s: EmergencyData, d: AcceptedDoctor) => void;
 }
 
+const STATUS_META: Record<string, { label: string; color: string; icon: string; message: string }> = {
+  accepted: { label: "Accepted", color: "#10b981", icon: "✅", message: "has accepted your request" },
+  "en-route": { label: "En Route", color: "#f59e0b", icon: "🚗", message: "is on the way" },
+  arrived: { label: "Arrived", color: "#3b82f6", icon: "📍", message: "has arrived!" },
+  "in-progress": { label: "In Progress", color: "#8b5cf6", icon: "🩺", message: "is treating you" },
+  resolved: { label: "Resolved", color: "#8b5cf6", icon: "🏁", message: "marked your case resolved" },
+};
+
 export default function PatientDashboard({ onNavigate, onOpenProfile, onTrackDoctor }: Props) {
   const { user } = useAppStore();
   const [sos, setSos] = useState<any[]>([]);
   const [sidebar, setSidebar] = useState(false);
   const [chat, setChat] = useState<{ emergencyId: string; doctorId: string; doctorName: string } | null>(null);
+  const [statusNotifs, setStatusNotifs] = useState<StatusNotification[]>([]);
+  const lastStatuses = useRef<Record<string, string>>({});
 
+  // Chat notifications
   const { notifications, unreadCount, dismissAll, clearUnread } = useChatNotifications({
     userId: user?._id,
     enabled: !!user?._id && user.role !== "doctor",
     interval: 5000,
   });
 
+  // Beep sound for status changes
+  const beep = useCallback(() => {
+    try {
+      const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
+      const o = ctx.createOscillator(); const g = ctx.createGain();
+      o.connect(g); g.connect(ctx.destination);
+      o.frequency.value = 660; o.type = "sine"; g.gain.value = 0.2;
+      o.start(); g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+      o.stop(ctx.currentTime + 0.4);
+      setTimeout(() => {
+        const o2 = ctx.createOscillator(); const g2 = ctx.createGain();
+        o2.connect(g2); g2.connect(ctx.destination);
+        o2.frequency.value = 880; o2.type = "sine"; g2.gain.value = 0.2;
+        o2.start(); g2.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.4);
+        o2.stop(ctx.currentTime + 0.4);
+      }, 200);
+    } catch {}
+  }, []);
+
+  // Fetch SOS + poll status changes
   const fetchSOS = useCallback(async () => {
     if (!user?._id || user.role === "doctor") return;
     try {
       const r = await fetch(`/api/patient/accepted-sos?patientId=${user._id}`);
-      if (r.ok) setSos((await r.json()).emergencies || []);
+      if (!r.ok) return;
+      const data = (await r.json()).emergencies || [];
+      setSos(data);
+
+      // Check each SOS for status changes
+      for (const s of data) {
+        const id = s.id || s._id;
+        if (!id) continue;
+        try {
+          const sr = await fetch(`/api/emergency/status/${id}`);
+          if (!sr.ok) continue;
+          const sd = await sr.json();
+          const newStatus = sd.emergency?.status;
+          const docName = sd.acceptedDoctor?.doctorName || sd.acceptedDoctor?.name || s.doctor?.name || "Doctor";
+
+          if (!newStatus) continue;
+
+          // Store current status on SOS object for badge display
+          s._liveStatus = newStatus;
+
+          const prev = lastStatuses.current[id];
+          if (prev && newStatus !== prev) {
+            const meta = STATUS_META[newStatus];
+            if (meta) {
+              const notif: StatusNotification = {
+                id: `${id}-${newStatus}-${Date.now()}`,
+                status: newStatus,
+                message: `Dr. ${docName} ${meta.message}`,
+                timestamp: Date.now(),
+                icon: meta.icon,
+                color: meta.color,
+              };
+              setStatusNotifs((p) => [...p.slice(-4), notif]);
+              beep();
+            }
+          }
+          lastStatuses.current[id] = newStatus;
+        } catch {}
+      }
+
+      setSos([...data]); // trigger re-render with _liveStatus
     } catch {}
-  }, [user]);
+  }, [user, beep]);
 
   useEffect(() => {
     fetchSOS();
-    const i = setInterval(fetchSOS, 10000);
+    const i = setInterval(fetchSOS, 6000);
     return () => clearInterval(i);
   }, [fetchSOS]);
 
+  const dismissStatusNotif = useCallback((id: string) => {
+    setStatusNotifs((p) => p.filter((n) => n.id !== id));
+  }, []);
+
   if (!user) return null;
+
+  const totalBadge = unreadCount + statusNotifs.filter((n) => n.timestamp > Date.now() - 30000).length;
 
   const track = (s: any) =>
     onTrackDoctor(
@@ -57,6 +136,9 @@ export default function PatientDashboard({ onNavigate, onOpenProfile, onTrackDoc
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] relative">
+      {/* Status toast notifications */}
+      <StatusToast notifications={statusNotifs} onDismiss={dismissStatusNotif} />
+
       {/* Notification Sidebar */}
       <NotificationSidebar
         open={sidebar}
@@ -92,7 +174,7 @@ export default function PatientDashboard({ onNavigate, onOpenProfile, onTrackDoc
             </h1>
           </div>
           <div className="flex items-center gap-1">
-            <NotificationBell count={unreadCount} onClick={() => setSidebar(true)} />
+            <NotificationBell count={totalBadge} onClick={() => setSidebar(true)} />
             <button onClick={onOpenProfile} className="flex items-center gap-2 hover:bg-[#f1f5f9] px-2.5 py-2 rounded-xl transition-colors">
               <span className="text-sm text-[#475569] hidden sm:block">{user.name}</span>
               <div className="w-8 h-8 bg-gradient-to-br from-[#3b82f6] to-[#8b5cf6] rounded-full flex items-center justify-center">
@@ -149,9 +231,9 @@ export default function PatientDashboard({ onNavigate, onOpenProfile, onTrackDoc
           <div className="flex items-center justify-between mb-5">
             <div className="flex items-center gap-3">
               <h3 className="font-bold text-lg text-[#10b981] font-[Outfit]">Accepted SOS ({sos.length})</h3>
-              {unreadCount > 0 && (
+              {totalBadge > 0 && (
                 <span className="bg-[#8b5cf6]/10 text-[#8b5cf6] text-xs font-bold px-2.5 py-1 rounded-full">
-                  {unreadCount} new
+                  {totalBadge} new
                 </span>
               )}
             </div>
@@ -164,30 +246,44 @@ export default function PatientDashboard({ onNavigate, onOpenProfile, onTrackDoc
             <p className="text-[#94a3b8] text-sm py-4">No accepted SOS requests yet.</p>
           ) : (
             <div className="space-y-3">
-              {sos.map((s: any) => (
-                <div key={s.id || s._id} className="bg-[#f8fafc] rounded-xl p-4 border border-[#e2e8f0] hover:border-[#cbd5e1] transition-colors">
-                  <div className="flex items-start justify-between gap-4">
-                    <div>
-                      <p className="text-[#1e293b] font-semibold">Dr. {s.doctor?.name || "Doctor"}</p>
-                      <p className="text-[#475569] text-sm">{s.doctor?.specialization || "General Practice"}</p>
-                      <p className="text-[#10b981] text-xs mt-1">Accepted • {s.estimatedArrival || "5-10 min"}</p>
-                    </div>
-                    <div className="flex flex-col gap-2 min-w-[130px]">
-                      <button onClick={() => track(s)} className="bg-[#3b82f6] hover:bg-[#2563eb] text-white px-3 py-2 rounded-xl text-sm font-medium transition-colors">
-                        📍 Track
-                      </button>
-                      <button onClick={() => openDoctorChat(s)} className="bg-[#8b5cf6] hover:bg-[#7c3aed] text-white px-3 py-2 rounded-xl text-sm font-medium transition-colors">
-                        💬 Chat
-                      </button>
-                      {s.doctor?.phone && (
-                        <button onClick={() => window.open(`tel:${s.doctor.phone}`, "_self")} className="bg-[#10b981] hover:bg-[#059669] text-white px-3 py-2 rounded-xl text-sm font-medium transition-colors">
-                          📞 Call
+              {sos.map((s: any) => {
+                const liveStatus = s._liveStatus || s.status || "accepted";
+                const meta = STATUS_META[liveStatus] || STATUS_META.accepted;
+
+                return (
+                  <div key={s.id || s._id} className="bg-[#f8fafc] rounded-xl p-4 border border-[#e2e8f0] hover:border-[#cbd5e1] transition-colors">
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 flex-wrap mb-1">
+                          <p className="text-[#1e293b] font-semibold">Dr. {s.doctor?.name || "Doctor"}</p>
+                          {/* Live status badge */}
+                          <span
+                            className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-semibold text-white shadow-sm transition-all duration-300"
+                            style={{ background: meta.color }}
+                          >
+                            {meta.icon} {meta.label}
+                          </span>
+                        </div>
+                        <p className="text-[#475569] text-sm">{s.doctor?.specialization || "General Practice"}</p>
+                        <p className="text-[#94a3b8] text-xs mt-1">ETA: {s.estimatedArrival || "5-10 min"}</p>
+                      </div>
+                      <div className="flex flex-col gap-2 min-w-[130px]">
+                        <button onClick={() => track(s)} className="bg-[#3b82f6] hover:bg-[#2563eb] text-white px-3 py-2 rounded-xl text-sm font-medium transition-colors">
+                          📍 Track
                         </button>
-                      )}
+                        <button onClick={() => openDoctorChat(s)} className="bg-[#8b5cf6] hover:bg-[#7c3aed] text-white px-3 py-2 rounded-xl text-sm font-medium transition-colors">
+                          💬 Chat
+                        </button>
+                        {s.doctor?.phone && (
+                          <button onClick={() => window.open(`tel:${s.doctor.phone}`, "_self")} className="bg-[#10b981] hover:bg-[#059669] text-white px-3 py-2 rounded-xl text-sm font-medium transition-colors">
+                            📞 Call
+                          </button>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>
