@@ -4,6 +4,8 @@ import User from "@/models/User";
 import Emergency from "@/models/Emergency";
 import { activeEmergencies } from "@/lib/emergencyStorage";
 
+const MEDICAL_ROLES = ["doctor", "nurse", "paramedic"];
+
 export async function GET(request: NextRequest) {
   try {
     await dbConnect();
@@ -21,13 +23,13 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: 'Doctor current location required' }, { status: 400 });
     }
 
-    // Get doctor info
+    // Get medical staff info (doctor, nurse, or paramedic)
     const doctor = await User.findById(doctorId);
-    if (!doctor || doctor.role !== 'doctor') {
-      return NextResponse.json({ error: 'Invalid doctor' }, { status: 404 });
+    if (!doctor || !MEDICAL_ROLES.includes(doctor.role)) {
+      return NextResponse.json({ error: 'Invalid medical staff' }, { status: 404 });
     }
 
-    // Persist doctor's current live location from client polling
+    // Persist current live location from client polling
     await User.findByIdAndUpdate(doctorId, {
       location: {
         type: 'Point',
@@ -51,6 +53,12 @@ export async function GET(request: NextRequest) {
       }
     }).sort({ createdAt: -1 });
 
+    // Populate patient data from User references
+    await Emergency.populate(emergencies, [
+      { path: 'reportedBy', select: 'name phone bloodGroup allergies medicalConditions age' },
+      { path: 'userId', select: 'name phone bloodGroup allergies medicalConditions age' },
+    ]);
+
     console.log('MongoDB emergency query result:', {
       doctorLocation: { lat, lng },
       totalActiveEmergencies: emergencies.length,
@@ -65,41 +73,39 @@ export async function GET(request: NextRequest) {
 
     // Calculate actual distances and format for frontend
     const nearbyEmergencies = emergencies.map(emergency => {
-      // MongoDB coordinates are [lng, lat], but we need [lat, lng] for distance calc
       const emergencyLat = emergency.location.coordinates[1];
       const emergencyLng = emergency.location.coordinates[0];
-      
       const distance = calculateDistance(lat, lng, emergencyLat, emergencyLng);
-      
-      console.log('Emergency distance calculation:', {
-        emergencyId: emergency._id,
-        doctorCoords: [lat, lng],
-        emergencyCoords: [emergencyLat, emergencyLng],
-        calculatedDistance: distance
-      });
+
+      // Use populated user data as fallback for missing fields
+      const patient: any = emergency.userId || emergency.reportedBy;
+      const pd = patient && typeof patient === 'object' && patient.name ? patient : null;
 
       return {
         id: emergency._id.toString(),
-        patientId: emergency.reportedBy?.toString() || 'anonymous',
-        patientName: emergency.reporterName,
-        location: {
-          lat: emergencyLat,
-          lng: emergencyLng,
-          address: emergency.address
-        },
+        patientId: pd?._id?.toString() || emergency.reportedBy?.toString() || emergency.userId?.toString() || 'anonymous',
+        patientName: emergency.reporterName || emergency.patientName || pd?.name || 'Unknown',
+        reporterPhone: emergency.reporterPhone,
+        phoneNumber: emergency.phoneNumber || emergency.reporterPhone || pd?.phone,
+        age: emergency.age || pd?.age,
+        bloodGroup: emergency.bloodGroup || emergency.healthData?.bloodGroup || pd?.bloodGroup,
+        allergies: emergency.allergies?.length ? emergency.allergies : (pd?.allergies || emergency.healthData?.allergies || []),
+        medicalConditions: emergency.medicalConditions?.length ? emergency.medicalConditions : (pd?.medicalConditions || emergency.healthData?.conditions || []),
+        latitude: emergencyLat,
+        longitude: emergencyLng,
+        address: emergency.address,
         description: emergency.description,
-        message: emergency.description, // for backward compatibility
+        message: emergency.description,
         timestamp: emergency.createdAt.toISOString(),
         createdAt: emergency.createdAt,
         status: emergency.status,
         distance: distance,
         formatted_distance: `${distance.toFixed(1)} km`,
         severity: emergency.severity,
-        healthData: emergency.healthData
       };
     });
 
-    console.log(`Found ${nearbyEmergencies.length} active emergencies within 5km for doctor ${doctor.name}`);
+    console.log(`Found ${nearbyEmergencies.length} active emergencies within 5km for ${doctor.role} ${doctor.name}`);
 
     return NextResponse.json({
       success: true,
@@ -125,33 +131,39 @@ export async function POST(request: NextRequest) {
   try {
     await dbConnect();
     
-    console.log('🔥 POST request received for emergency acceptance');
+    console.log('POST request received for emergency acceptance');
     
     let requestBody;
     try {
       requestBody = await request.json();
-      console.log('🔥 Request body parsed:', requestBody);
+      console.log('Request body parsed:', requestBody);
     } catch (parseError) {
-      console.error('❌ JSON parse error:', parseError);
+      console.error('JSON parse error:', parseError);
       return NextResponse.json({ error: 'Invalid JSON in request body' }, { status: 400 });
     }
     
     const { doctorId, emergencyId, action, doctorLocation } = requestBody;
 
-    console.log('🔥 Doctor emergency response:', {
+    console.log('Medical staff emergency response:', {
       doctorId,
       emergencyId,
       action,
       doctorIdType: typeof doctorId,
       emergencyIdType: typeof emergencyId
     });
-    
-    if (!doctor || doctor.role !== 'doctor') {
-      console.error('❌ Invalid doctor:', { found: !!doctor, role: doctor?.role });
-      return NextResponse.json({ error: 'Invalid doctor' }, { status: 404 });
+
+    if (!doctorId || !emergencyId || !action) {
+      return NextResponse.json({ error: 'doctorId, emergencyId, and action are required' }, { status: 400 });
     }
 
-    // Update doctor's latest location (if provided) to keep patient tracking accurate
+    // FIX: This line was MISSING in the original — doctor was used below without being defined
+    const doctor = await User.findById(doctorId);
+    if (!doctor || !MEDICAL_ROLES.includes(doctor.role)) {
+      console.error('Invalid medical staff:', { found: !!doctor, role: doctor?.role });
+      return NextResponse.json({ error: 'Invalid medical staff' }, { status: 404 });
+    }
+
+    // Update latest location if provided to keep patient tracking accurate
     if (doctorLocation?.lat && doctorLocation?.lng) {
       await User.findByIdAndUpdate(doctorId, {
         location: {
@@ -164,9 +176,9 @@ export async function POST(request: NextRequest) {
     }
 
     // Get emergency from MongoDB
-    console.log('🔥 Looking up emergency with ID:', emergencyId);
+    console.log('Looking up emergency with ID:', emergencyId);
     const emergency = await Emergency.findById(emergencyId);
-    console.log('🔥 Emergency found:', {
+    console.log('Emergency found:', {
       found: !!emergency,
       id: emergency?._id?.toString(),
       status: emergency?.status,
@@ -174,29 +186,25 @@ export async function POST(request: NextRequest) {
     });
     
     if (!emergency) {
-      console.error('❌ Emergency not found in MongoDB:', emergencyId);
+      console.error('Emergency not found in MongoDB:', emergencyId);
       return NextResponse.json({ error: 'Emergency not found' }, { status: 404 });
     }
 
     if (emergency.status !== 'active') {
-      console.error('❌ Emergency is not active, current status:', emergency.status);
+      console.error('Emergency is not active, current status:', emergency.status);
       return NextResponse.json({ error: 'Emergency is no longer active' }, { status: 400 });
     }
 
     if (action === 'accept') {
-      console.log(`Doctor ${doctor.name} accepting emergency ${emergencyId}`);
-      console.log('Doctor ObjectId:', doctor._id);
-      console.log('Doctor ObjectId type:', typeof doctor._id);
+      console.log(`${doctor.role} ${doctor.name} accepting emergency ${emergencyId}`);
 
       try {
-        // First, find the emergency to make sure it exists
         const existingEmergency = await Emergency.findById(emergencyId);
         if (!existingEmergency) {
           console.error('Emergency not found before update:', emergencyId);
           return NextResponse.json({ error: 'Emergency not found' }, { status: 404 });
         }
 
-        // Use findByIdAndUpdate with explicit field setting
         const updateData = {
           status: 'accepted',
           acceptedBy: doctor._id,
@@ -220,18 +228,16 @@ export async function POST(request: NextRequest) {
           return NextResponse.json({ error: 'Failed to update emergency' }, { status: 500 });
         }
 
-        // Double check by querying again with raw result
+        // Verify persistence
         const verifyEmergency = await Emergency.findById(emergencyId).lean();
         if (!verifyEmergency?.acceptedBy) {
           return NextResponse.json({ error: 'Failed to persist emergency acceptance' }, { status: 500 });
         }
 
-        const updatedEmergency = updateResult;
-
         // Populate the reportedBy field for response
-        await updatedEmergency.populate('reportedBy', 'name phone bloodGroup allergies medicalConditions age');
+        await updateResult.populate('reportedBy', 'name phone bloodGroup allergies medicalConditions age');
 
-      } catch (updateError) {
+      } catch (updateError: any) {
         return NextResponse.json({ 
           error: 'Failed to update emergency', 
           details: updateError.message,
@@ -246,14 +252,14 @@ export async function POST(request: NextRequest) {
         mapEmergency.acceptedDoctor = {
           id: doctor._id.toString(),
           doctorName: doctor.name,
-          specialization: doctor.specialization || 'General Practice',
+          specialization: doctor.specialization || doctor.role,
           phone: doctor.phone,
           estimatedArrival: '5-10 minutes'
         };
         activeEmergencies.set(emergencyId, mapEmergency);
       }
 
-      console.log(`Emergency ${emergencyId} accepted by Dr. ${doctor.name}`);
+      console.log(`Emergency ${emergencyId} accepted by ${doctor.role} ${doctor.name}`);
 
       return NextResponse.json({
         success: true,
@@ -264,7 +270,7 @@ export async function POST(request: NextRequest) {
           acceptedDoctor: {
             id: doctor._id,
             name: doctor.name,
-            specialization: doctor.specialization || 'General Practice',
+            specialization: doctor.specialization || doctor.role,
             phone: doctor.phone,
             estimatedArrival: '5-10 minutes'
           }
@@ -273,7 +279,7 @@ export async function POST(request: NextRequest) {
     }
 
     if (action === 'decline') {
-      console.log(`Doctor ${doctor.name} declined emergency ${emergencyId}`);
+      console.log(`${doctor.role} ${doctor.name} declined emergency ${emergencyId}`);
       return NextResponse.json({
         success: true,
         message: 'Emergency declined'
@@ -283,25 +289,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Invalid action' }, { status: 400 });
 
   } catch (error: any) {
-    console.error('❌ Doctor response error:', error);
-    console.error('❌ Error stack:', error.stack);
-    console.error('❌ Error details:', {
-      name: error.name,
-      message: error.message,
-      code: error.code
-    });
-    
+    console.error('Doctor response error:', error);
     return NextResponse.json({ 
-      error: 'Failed to process doctor response',
+      error: 'Failed to process response',
       details: error.message || 'Unknown error',
       errorType: error.name || 'UnknownError'
     }, { status: 500 });
   }
 }
 
-// Helper function to calculate distance between two coordinates
 function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: number): number {
-  const R = 6371; // Radius of the Earth in kilometers
+  const R = 6371;
   const dLat = (lat2 - lat1) * Math.PI / 180;
   const dLon = (lon2 - lon1) * Math.PI / 180;
   const a = 
@@ -309,6 +307,5 @@ function calculateDistance(lat1: number, lon1: number, lat2: number, lon2: numbe
     Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
     Math.sin(dLon/2) * Math.sin(dLon/2);
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  const distance = R * c; // Distance in kilometers
-  return distance;
+  return R * c;
 }

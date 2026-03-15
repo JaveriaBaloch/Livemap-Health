@@ -2,52 +2,206 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "@/lib/store";
 import { useChatNotifications } from "@/lib/useChatNotifications";
+import { useEmergencyStatusNotifications } from "@/lib/useEmergencyStatusNotifications";
 import EmergencyChat from "@/components/ui/EmergencyChat";
 import NotificationSidebar, { NotificationBell } from "@/components/ui/NotificationSidebar";
+import StatusToast from "@/components/ui/StatusToast";
 import type { AcceptedDoctor } from "@/types";
+
 interface Props { onBack: () => void; initialAcceptedDoctor?: AcceptedDoctor | null; initialEmergencyId?: string | null; }
+
+const STATUS_DISPLAY: Record<string, { label: string; color: string; icon: string }> = {
+  accepted: { label: "Accepted", color: "#10b981", icon: "✅" },
+  "en-route": { label: "En Route", color: "#f59e0b", icon: "🚗" },
+  arrived: { label: "Arrived", color: "#3b82f6", icon: "📍" },
+  "in-progress": { label: "In Progress", color: "#8b5cf6", icon: "🩺" },
+  resolved: { label: "Resolved", color: "#8b5cf6", icon: "🏁" },
+};
+
 export default function EmergencySOS({ onBack, initialAcceptedDoctor = null, initialEmergencyId = null }: Props) {
-  const { user, currentLocation } = useAppStore(); const [active, setActive] = useState(!!initialAcceptedDoctor || !!initialEmergencyId); const [loading, setLoading] = useState(false); const [msg, setMsg] = useState(""); const [eid, setEid] = useState<string | null>(initialEmergencyId); const [responding, setResponding] = useState<any[]>([]); const [doctor, setDoctor] = useState<AcceptedDoctor | null>(initialAcceptedDoctor); const [showChat, setShowChat] = useState(false); const [sidebar, setSidebar] = useState(false);
+  const { user, currentLocation } = useAppStore();
+  const [active, setActive] = useState(!!initialAcceptedDoctor || !!initialEmergencyId);
+  const [loading, setLoading] = useState(false);
+  const [msg, setMsg] = useState("");
+  const [eid, setEid] = useState<string | null>(initialEmergencyId);
+  const [responding, setResponding] = useState<any[]>([]);
+  const [doctor, setDoctor] = useState<AcceptedDoctor | null>(initialAcceptedDoctor);
+  const [showChat, setShowChat] = useState(false);
+  const [sidebar, setSidebar] = useState(false);
+
   const { notifications, unreadCount, dismissAll, clearUnread } = useChatNotifications({ userId: user?._id, enabled: !!user?._id && !!doctor, interval: 4000 });
-  const poll = useCallback(async (id: string) => { try { const r = await fetch(`/api/emergency/status/${id}`); if (!r.ok) { setTimeout(() => poll(id), 5000); return; } const d = await r.json(); if (d?.emergency?.status === "cancelled" || d?.emergency?.status === "resolved") { setActive(false); setEid(null); setResponding([]); setDoctor(null); return; } const docs = d.respondingDoctors || []; setResponding(docs); const a = d.acceptedDoctor || docs.find((x: any) => x.status === "accepted"); if (a) setDoctor(a); else setTimeout(() => poll(id), 5000); } catch { setTimeout(() => poll(id), 5000); } }, []);
+
+  const { currentStatus, notifications: statusNotifs, dismiss: dismissStatus } = useEmergencyStatusNotifications({ emergencyId: eid, enabled: !!eid && !!doctor, interval: 4000 });
+
+  useEffect(() => {
+    if (currentStatus === "resolved" && doctor) {
+      const t = setTimeout(() => { setActive(false); setEid(null); setDoctor(null); setResponding([]); onBack(); }, 5000);
+      return () => clearTimeout(t);
+    }
+  }, [currentStatus, doctor, onBack]);
+
+  const poll = useCallback(async (id: string) => {
+    try {
+      const r = await fetch(`/api/emergency/status/${id}`);
+      if (!r.ok) { setTimeout(() => poll(id), 5000); return; }
+      const d = await r.json();
+      if (d?.emergency?.status === "cancelled") { setActive(false); setEid(null); setResponding([]); setDoctor(null); return; }
+      if (d?.emergency?.status === "resolved" && !doctor) { setActive(false); setEid(null); setResponding([]); setDoctor(null); return; }
+      const docs = d.respondingDoctors || [];
+      setResponding(docs);
+      const a = d.acceptedDoctor || docs.find((x: any) => x.status === "accepted");
+      if (a) setDoctor(a); else setTimeout(() => poll(id), 5000);
+    } catch { setTimeout(() => poll(id), 5000); }
+  }, [doctor]);
+
   useEffect(() => { if (eid && !doctor) poll(eid); }, []);
-  const create = async () => { if (!currentLocation) { alert("Location required"); return; } if (!user?._id) { alert("Please log in"); return; } setLoading(true); try { const r = await fetch("/api/emergency/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patientId: user._id, patientName: user.name, location: currentLocation, message: msg || "Emergency assistance needed", timestamp: new Date().toISOString() }) }); if (!r.ok) throw 0; const d = await r.json(); setEid(d.emergencyId); setActive(true); poll(d.emergencyId); } catch { alert("Failed"); } finally { setLoading(false); } };
-  const cancel = async () => { if (eid) try { await fetch(`/api/emergency/status/${eid}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "cancel" }) }); } catch {} setActive(false); setEid(null); setResponding([]); setDoctor(null); setMsg(""); };
 
-  if (doctor) { const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY; const hasLoc = !!(doctor.location?.lat && doctor.location?.lng);
-    return (<div className="min-h-screen bg-[#f8fafc] text-[#1e293b] relative">
-      <NotificationSidebar open={sidebar} onClose={() => setSidebar(false)} notifications={notifications} onNotificationClick={() => { setSidebar(false); clearUnread(); setShowChat(true); }} onClearAll={dismissAll} unreadCount={unreadCount} />
-      <div className="bg-[#ef4444]/5 backdrop-blur-xl border-b border-[#ef4444]/20 sticky top-0 z-50"><div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between"><div className="flex items-center gap-3"><button onClick={onBack} className="p-2 hover:bg-[#f1f5f9] rounded-xl"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button><div className="w-2.5 h-2.5 bg-[#ef4444] rounded-full animate-pulse" /><div><h1 className="font-bold text-lg font-[Outfit]">Help On The Way</h1><p className="text-[#475569] text-xs">Dr. {doctor.doctorName}</p></div></div><NotificationBell count={unreadCount} onClick={() => setSidebar(true)} /></div></div>
-      <div className="bg-white border-b border-[#e2e8f0] p-4"><div className="max-w-6xl mx-auto flex items-center gap-4"><div className="w-14 h-14 bg-gradient-to-br from-[#3b82f6] to-[#8b5cf6] rounded-2xl flex items-center justify-center"><span className="text-white font-bold text-lg">{doctor.doctorName?.charAt(0)?.toUpperCase()}</span></div><div className="flex-1"><h3 className="font-bold text-lg font-[Outfit]">Dr. {doctor.doctorName}</h3><p className="text-[#475569] text-sm">{doctor.specialization || "General Practice"}</p><p className="text-[#3b82f6] text-sm">ETA: {doctor.estimatedArrival || "5-10 min"}</p></div><div className="text-center"><span className="text-[#10b981] text-xs font-medium">STATUS</span><p className="text-[#1e293b] font-bold text-sm">En Route</p></div></div><div className="mt-3 bg-[#10b981]/10 border border-[#10b981]/30 rounded-xl p-3 max-w-6xl mx-auto"><p className="text-[#10b981] text-sm">✅ Dr. {doctor.doctorName} accepted and is on the way.</p></div></div>
-      <div className="flex-1 relative"><div className="absolute inset-0">{hasLoc ? <iframe src={`https://www.google.com/maps/embed/v1/directions?key=${apiKey}&origin=${doctor.location!.lat},${doctor.location!.lng}&destination=${currentLocation?.lat},${currentLocation?.lng}&mode=driving`} width="100%" height="100%" style={{ border: 0, minHeight: "50vh" }} allowFullScreen loading="lazy" /> : <div className="h-full min-h-[50vh] bg-white flex items-center justify-center"><p className="text-[#94a3b8]">Waiting for doctor's location…</p></div>}</div></div>
-      <div className="bg-white border-t border-[#e2e8f0] p-4"><div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-3">
-        <button onClick={() => window.open(`tel:${doctor.phone || "911"}`, "_self")} className="bg-[#10b981] hover:bg-[#059669] text-white py-3 px-4 rounded-xl text-sm font-medium transition-colors">📞 Call</button>
-        <button onClick={() => { if (hasLoc && currentLocation) window.open(`https://www.google.com/maps/dir/?api=1&origin=${currentLocation.lat},${currentLocation.lng}&destination=${doctor.location!.lat},${doctor.location!.lng}&travelmode=driving`, "_blank"); else alert("Not available"); }} className="bg-[#3b82f6] hover:bg-[#2563eb] text-white py-3 px-4 rounded-xl text-sm font-medium transition-colors">📍 Map</button>
-        <button onClick={() => { clearUnread(); setShowChat(true); }} className={`bg-[#8b5cf6] hover:bg-[#7c3aed] text-white py-3 px-4 rounded-xl text-sm font-medium transition-colors relative ${unreadCount > 0 ? "ring-2 ring-[#8b5cf6]/30" : ""}`}>💬 Chat{unreadCount > 0 && <span className="absolute -top-1 -right-1 w-5 h-5 bg-[#ef4444] text-white text-[10px] rounded-full flex items-center justify-center">{unreadCount}</span>}</button>
-        <button onClick={() => window.open("tel:911", "_self")} className="bg-[#ef4444] hover:bg-[#dc2626] text-white py-3 px-4 rounded-xl text-sm font-medium transition-colors">🚨 911</button>
-      </div>{showChat && eid && doctor.doctorId && <div className="mt-4 max-w-6xl mx-auto"><EmergencyChat emergencyId={eid} otherUserId={doctor.doctorId} otherUserName={doctor.doctorName || "Doctor"} onClose={() => setShowChat(false)} title="Chat with Doctor" /></div>}</div>
-    </div>); }
+  const create = async () => {
+    if (!currentLocation) { alert("Location required"); return; }
+    if (!user?._id) { alert("Please log in"); return; }
+    setLoading(true);
+    try {
+      const r = await fetch("/api/emergency/create", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ patientId: user._id, patientName: user.name, location: currentLocation, message: msg || "Emergency assistance needed", timestamp: new Date().toISOString() }) });
+      if (!r.ok) throw 0;
+      const d = await r.json();
+      setEid(d.emergencyId); setActive(true); poll(d.emergencyId);
+    } catch { alert("Failed"); } finally { setLoading(false); }
+  };
 
-  if (active) { const acc = responding.find((d: any) => d.status === "accepted");
-    return (<div className="min-h-screen bg-[#f8fafc] text-[#1e293b]">
-      <div className="bg-[#ef4444]/5 border-b border-[#ef4444]/20 sticky top-0 z-50"><div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center gap-3"><div className="w-2.5 h-2.5 bg-[#ef4444] rounded-full animate-pulse" /><h1 className="font-bold text-lg font-[Outfit]">Emergency Active</h1></div></div>
-      <div className="max-w-4xl mx-auto px-4 py-8">
-        <div className="bg-white rounded-2xl p-8 text-center mb-6 border border-[#e2e8f0] shadow-sm"><div className="w-20 h-20 bg-[#ef4444]/10 rounded-2xl flex items-center justify-center mx-auto mb-6 animate-glow"><svg className="w-10 h-10 text-[#ef4444]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.314 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg></div><h2 className="text-2xl font-bold font-[Outfit] mb-3">Request Sent</h2><p className="text-[#475569] mb-4">&quot;{msg}&quot;</p><div className="bg-[#f1f5f9] rounded-xl p-4 text-sm text-[#475569]">🚨 Searching…<br/>📍 Location shared<br/>⏱️ Waiting</div></div>
-        {acc && <div className="bg-[#10b981]/10 border border-[#10b981]/30 rounded-2xl p-6 mb-6"><h3 className="font-bold text-[#10b981] font-[Outfit] mb-2">✅ Accepted</h3><p className="text-[#1e293b] mb-3">Dr. {acc.doctorName} accepted.</p><button onClick={() => setDoctor(acc)} className="bg-[#10b981] hover:bg-[#059669] text-white py-2 px-5 rounded-xl text-sm font-medium transition-colors">Open Tracking</button></div>}
-        {responding.length > 0 && <div className="bg-white rounded-2xl p-6 mb-6 border border-[#e2e8f0] shadow-sm"><h3 className="font-bold text-[#10b981] font-[Outfit] mb-4">{responding.length} Doctor(s)</h3><div className="space-y-2">{responding.map((d, i) => (<div key={i} className="flex items-center gap-3 p-3 bg-[#f8fafc] rounded-xl"><div className="w-10 h-10 bg-[#3b82f6]/10 rounded-full flex items-center justify-center"><span className="text-[#3b82f6] font-bold text-sm">{d.doctorName?.charAt(0)?.toUpperCase()}</span></div><div className="flex-1"><p className="font-medium text-sm">Dr. {d.doctorName}</p><p className="text-[#94a3b8] text-xs">{d.specialization}</p></div><span className={`text-xs ${d.status === "accepted" ? "text-[#10b981] font-semibold" : "text-[#475569]"}`}>{d.status === "accepted" ? "Accepted" : "Responding"}</span></div>))}</div></div>}
-        <div className="flex justify-center gap-3"><button onClick={cancel} className="bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#475569] py-3 px-6 rounded-xl text-sm transition-colors">Cancel</button><button onClick={() => window.open("tel:911", "_self")} className="bg-[#ef4444] hover:bg-[#dc2626] text-white py-3 px-6 rounded-xl text-sm font-medium transition-colors">📞 Call 911</button></div>
+  const cancel = async () => {
+    if (eid) try { await fetch(`/api/emergency/status/${eid}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: "cancel" }) }); } catch {}
+    setActive(false); setEid(null); setResponding([]); setDoctor(null); setMsg("");
+  };
+
+  const statusInfo = STATUS_DISPLAY[currentStatus] || STATUS_DISPLAY.accepted;
+
+  /* ================================================================
+     TRACKING VIEW — Doctor accepted
+     ================================================================ */
+  if (doctor) {
+    const apiKey = process.env.NEXT_PUBLIC_GOOGLE_MAPS_API_KEY;
+    const hasLoc = !!(doctor.location?.lat && doctor.location?.lng);
+
+    return (
+      <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] flex flex-col">
+        <StatusToast notifications={statusNotifs} onDismiss={dismissStatus} />
+        <NotificationSidebar open={sidebar} onClose={() => setSidebar(false)} notifications={notifications} onNotificationClick={() => { setSidebar(false); clearUnread(); setShowChat(true); }} onClearAll={dismissAll} unreadCount={unreadCount} />
+
+        {/* Header */}
+        <div className="bg-[#ef4444]/5 backdrop-blur-xl border-b border-[#ef4444]/20 sticky top-0 z-50 flex-shrink-0">
+          <div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <button onClick={onBack} className="p-2 hover:bg-[#f1f5f9] rounded-xl"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button>
+              <div className="w-2.5 h-2.5 bg-[#ef4444] rounded-full animate-pulse" />
+              <div><h1 className="font-bold text-lg font-[Outfit]">Help On The Way</h1><p className="text-[#475569] text-xs">Dr. {doctor.doctorName}</p></div>
+            </div>
+            <NotificationBell count={unreadCount} onClick={() => setSidebar(true)} />
+          </div>
+        </div>
+
+        {/* Doctor info + live status */}
+        <div className="bg-white border-b border-[#e2e8f0] p-4 flex-shrink-0">
+          <div className="max-w-6xl mx-auto flex items-center gap-4">
+            <div className="w-14 h-14 bg-gradient-to-br from-[#3b82f6] to-[#8b5cf6] rounded-2xl flex items-center justify-center flex-shrink-0"><span className="text-white font-bold text-lg">{doctor.doctorName?.charAt(0)?.toUpperCase()}</span></div>
+            <div className="flex-1 min-w-0">
+              <h3 className="font-bold text-lg font-[Outfit]">Dr. {doctor.doctorName}</h3>
+              <p className="text-[#475569] text-sm">{doctor.specialization || "General Practice"}</p>
+              <p className="text-[#3b82f6] text-sm">ETA: {doctor.estimatedArrival || "5-10 min"}</p>
+            </div>
+            {/* Live status badge */}
+            <div className="flex flex-col items-center flex-shrink-0">
+              <span className="text-[10px] text-[#94a3b8] uppercase tracking-wider mb-1">Status</span>
+              <div className="px-3.5 py-1.5 rounded-full flex items-center gap-1.5 text-white text-sm font-semibold shadow-md transition-all duration-300" style={{ background: statusInfo.color }}>
+                <span>{statusInfo.icon}</span><span>{statusInfo.label}</span>
+              </div>
+            </div>
+          </div>
+          {/* Status message */}
+          <div className="mt-3 rounded-xl p-3 max-w-6xl mx-auto border transition-all duration-300" style={{ background: `${statusInfo.color}10`, borderColor: `${statusInfo.color}30` }}>
+            <p className="text-sm" style={{ color: statusInfo.color }}>
+              {currentStatus === "en-route" && `🚗 Dr. ${doctor.doctorName} is on the way to your location.`}
+              {currentStatus === "arrived" && `📍 Dr. ${doctor.doctorName} has arrived at your location!`}
+              {currentStatus === "resolved" && `🏁 Your emergency has been resolved. Redirecting…`}
+              {currentStatus === "accepted" && `✅ Dr. ${doctor.doctorName} accepted and is preparing to leave.`}
+              {currentStatus === "in-progress" && `🩺 Dr. ${doctor.doctorName} is treating you now.`}
+            </p>
+          </div>
+        </div>
+
+        {/* Resolved overlay */}
+        {currentStatus === "resolved" ? (
+          <div className="flex-1 flex items-center justify-center p-8">
+            <div className="bg-white rounded-2xl border border-[#8b5cf6]/20 p-8 text-center shadow-lg max-w-sm w-full animate-slide-up">
+              <div className="text-5xl mb-4">🏁</div>
+              <h2 className="text-2xl font-bold font-[Outfit] text-[#8b5cf6] mb-2">Case Resolved</h2>
+              <p className="text-[#475569]">Your emergency has been resolved by Dr. {doctor.doctorName}.</p>
+              <p className="text-[#94a3b8] text-sm mt-3">Redirecting to dashboard…</p>
+            </div>
+          </div>
+        ) : (
+          <>
+            {/* Map */}
+            <div className="flex-shrink-0">
+              {hasLoc ? (
+                <iframe src={`https://www.google.com/maps/embed/v1/directions?key=${apiKey}&origin=${doctor.location!.lat},${doctor.location!.lng}&destination=${currentLocation?.lat},${currentLocation?.lng}&mode=driving`} width="100%" height="400" style={{ border: 0, display: "block" }} allowFullScreen loading="lazy" referrerPolicy="no-referrer-when-downgrade" />
+              ) : (
+                <div className="h-[400px] bg-[#f1f5f9] flex items-center justify-center"><p className="text-[#94a3b8]">Waiting for doctor's location…</p></div>
+              )}
+            </div>
+
+            {/* Action buttons */}
+            <div className="bg-white border-t border-[#e2e8f0] p-4 flex-shrink-0">
+              <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-3">
+                <button onClick={() => window.open(`tel:${doctor.phone || "911"}`, "_self")} className="bg-[#10b981] hover:bg-[#059669] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors">📞 Call Doctor</button>
+                <button onClick={() => { if (hasLoc && currentLocation) window.open(`https://www.google.com/maps/dir/?api=1&origin=${currentLocation.lat},${currentLocation.lng}&destination=${doctor.location!.lat},${doctor.location!.lng}&travelmode=driving`, "_blank"); else alert("Not available"); }} className="bg-[#3b82f6] hover:bg-[#2563eb] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors">📍 Open Map</button>
+                <button onClick={() => { clearUnread(); setShowChat(true); }} className={`bg-[#8b5cf6] hover:bg-[#7c3aed] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors relative ${unreadCount > 0 ? "ring-2 ring-[#8b5cf6]/30" : ""}`}>💬 Chat{unreadCount > 0 && <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#ef4444] text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-white">{unreadCount}</span>}</button>
+                <button onClick={() => window.open("tel:911", "_self")} className="bg-[#ef4444] hover:bg-[#dc2626] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors">🚨 Call 911</button>
+              </div>
+            </div>
+          </>
+        )}
+
+        {/* Chat popup */}
+        {showChat && eid && doctor.doctorId && (
+          <><div className="fixed inset-0 bg-black/20 z-[60]" onClick={() => setShowChat(false)} /><div className="fixed bottom-4 right-4 left-4 md:left-auto md:w-[420px] z-[65] animate-slide-up"><div className="bg-white rounded-2xl border border-[#8b5cf6]/20 shadow-2xl overflow-hidden"><div className="bg-gradient-to-r from-[#8b5cf6] to-[#7c3aed] px-4 py-3 flex items-center justify-between"><div className="flex items-center gap-3"><div className="w-8 h-8 bg-white/20 rounded-full flex items-center justify-center"><span className="text-white font-bold text-sm">{doctor.doctorName?.charAt(0)?.toUpperCase()}</span></div><div><p className="text-white font-semibold text-sm">Dr. {doctor.doctorName}</p><p className="text-white/70 text-xs">Emergency Chat</p></div></div><button onClick={() => setShowChat(false)} className="text-white/70 hover:text-white p-1 rounded-lg"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg></button></div><div className="p-3"><EmergencyChat emergencyId={eid} otherUserId={doctor.doctorId} otherUserName={doctor.doctorName || "Doctor"} onClose={() => setShowChat(false)} title="" /></div></div></div></>
+        )}
       </div>
-    </div>); }
+    );
+  }
 
-  return (<div className="min-h-screen bg-[#f8fafc] text-[#1e293b]">
-    <div className="bg-[#ef4444]/5 border-b border-[#ef4444]/20 sticky top-0 z-50"><div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center gap-3"><button onClick={onBack} className="p-2 hover:bg-[#f1f5f9] rounded-xl"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button><h1 className="font-bold text-lg font-[Outfit]">Emergency SOS</h1></div></div>
-    <div className="max-w-2xl mx-auto px-4 py-8"><div className="bg-white rounded-2xl p-8 border border-[#e2e8f0] shadow-sm">
-      <div className="text-center mb-8"><div className="w-20 h-20 bg-[#ef4444]/10 rounded-2xl flex items-center justify-center mx-auto mb-4"><svg className="w-10 h-10 text-[#ef4444]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.314 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg></div><h2 className="text-2xl font-bold font-[Outfit] mb-2">Request Emergency Help</h2><p className="text-[#475569]">Notify nearby doctors within 8km</p></div>
-      <div className="space-y-5"><div><label className="block text-sm text-[#475569] mb-2">Describe emergency (optional)</label><textarea value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="Chest pain, difficulty breathing…" className="w-full bg-[#f1f5f9] border border-[#e2e8f0] rounded-xl px-4 py-3 text-[#1e293b] placeholder:text-[#94a3b8] focus:outline-none focus:border-[#ef4444] transition-colors" rows={4} /></div>
-        <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 rounded-xl p-4"><p className="text-[#f59e0b] font-medium text-sm mb-1">What happens next:</p><ul className="text-[#92400e] text-xs space-y-1"><li>• Location shared with nearby doctors</li><li>• Doctors within 8km notified</li><li>• Real-time responses</li><li>• Navigation once accepted</li></ul></div>
-        <button onClick={() => create()} disabled={loading} className="w-full bg-gradient-to-r from-[#ef4444] to-[#f97316] hover:from-[#dc2626] hover:to-[#ea580c] disabled:opacity-50 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-[#ef4444]/20">{loading ? "Sending…" : "🆘 SEND EMERGENCY REQUEST"}</button>
-        <button onClick={() => window.open("tel:911", "_self")} className="w-full bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#475569] py-3 rounded-xl text-sm transition-colors">📞 Or Call Emergency Services</button>
+  /* ================================================================
+     WAITING VIEW — SOS sent, waiting
+     ================================================================ */
+  if (active) {
+    const acc = responding.find((d: any) => d.status === "accepted");
+    return (
+      <div className="min-h-screen bg-[#f8fafc] text-[#1e293b]">
+        <StatusToast notifications={statusNotifs} onDismiss={dismissStatus} />
+        <div className="bg-[#ef4444]/5 border-b border-[#ef4444]/20 sticky top-0 z-50"><div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center gap-3"><div className="w-2.5 h-2.5 bg-[#ef4444] rounded-full animate-pulse" /><h1 className="font-bold text-lg font-[Outfit]">Emergency Active</h1></div></div>
+        <div className="max-w-4xl mx-auto px-4 py-8">
+          <div className="bg-white rounded-2xl p-8 text-center mb-6 border border-[#e2e8f0] shadow-sm"><div className="w-20 h-20 bg-[#ef4444]/10 rounded-2xl flex items-center justify-center mx-auto mb-6 animate-glow"><svg className="w-10 h-10 text-[#ef4444]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.314 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg></div><h2 className="text-2xl font-bold font-[Outfit] mb-3">Request Sent</h2><p className="text-[#475569] mb-4">&quot;{msg}&quot;</p><div className="bg-[#f1f5f9] rounded-xl p-4 text-sm text-[#475569]">🚨 Searching…<br/>📍 Location shared<br/>⏱️ Waiting</div></div>
+          {acc && <div className="bg-[#10b981]/10 border border-[#10b981]/30 rounded-2xl p-6 mb-6"><h3 className="font-bold text-[#10b981] font-[Outfit] mb-2">✅ Accepted</h3><p className="text-[#1e293b] mb-3">Dr. {acc.doctorName} accepted.</p><button onClick={() => setDoctor(acc)} className="bg-[#10b981] hover:bg-[#059669] text-white py-2 px-5 rounded-xl text-sm font-medium transition-colors">Open Tracking</button></div>}
+          {responding.length > 0 && <div className="bg-white rounded-2xl p-6 mb-6 border border-[#e2e8f0] shadow-sm"><h3 className="font-bold text-[#10b981] font-[Outfit] mb-4">{responding.length} Doctor(s)</h3><div className="space-y-2">{responding.map((d, i) => (<div key={i} className="flex items-center gap-3 p-3 bg-[#f8fafc] rounded-xl"><div className="w-10 h-10 bg-[#3b82f6]/10 rounded-full flex items-center justify-center"><span className="text-[#3b82f6] font-bold text-sm">{d.doctorName?.charAt(0)?.toUpperCase()}</span></div><div className="flex-1"><p className="font-medium text-sm">Dr. {d.doctorName}</p><p className="text-[#94a3b8] text-xs">{d.specialization}</p></div><span className={`text-xs ${d.status === "accepted" ? "text-[#10b981] font-semibold" : "text-[#475569]"}`}>{d.status === "accepted" ? "Accepted" : "Responding"}</span></div>))}</div></div>}
+          <div className="flex justify-center gap-3"><button onClick={cancel} className="bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#475569] py-3 px-6 rounded-xl text-sm transition-colors">Cancel</button><button onClick={() => window.open("tel:911", "_self")} className="bg-[#ef4444] hover:bg-[#dc2626] text-white py-3 px-6 rounded-xl text-sm font-medium transition-colors">📞 Call 911</button></div>
+        </div>
       </div>
-    </div></div>
-  </div>);
+    );
+  }
+
+  /* ================================================================
+     FORM VIEW — Send emergency request
+     ================================================================ */
+  return (
+    <div className="min-h-screen bg-[#f8fafc] text-[#1e293b]">
+      <div className="bg-[#ef4444]/5 border-b border-[#ef4444]/20 sticky top-0 z-50"><div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center gap-3"><button onClick={onBack} className="p-2 hover:bg-[#f1f5f9] rounded-xl"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" /></svg></button><h1 className="font-bold text-lg font-[Outfit]">Emergency SOS</h1></div></div>
+      <div className="max-w-2xl mx-auto px-4 py-8"><div className="bg-white rounded-2xl p-8 border border-[#e2e8f0] shadow-sm">
+        <div className="text-center mb-8"><div className="w-20 h-20 bg-[#ef4444]/10 rounded-2xl flex items-center justify-center mx-auto mb-4"><svg className="w-10 h-10 text-[#ef4444]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.314 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg></div><h2 className="text-2xl font-bold font-[Outfit] mb-2">Request Emergency Help</h2><p className="text-[#475569]">Notify nearby doctors within 8km</p></div>
+        <div className="space-y-5"><div><label className="block text-sm text-[#475569] mb-2">Describe emergency (optional)</label><textarea value={msg} onChange={(e) => setMsg(e.target.value)} placeholder="Chest pain, difficulty breathing…" className="w-full bg-[#f1f5f9] border border-[#e2e8f0] rounded-xl px-4 py-3 text-[#1e293b] placeholder:text-[#94a3b8] focus:outline-none focus:border-[#ef4444] transition-colors" rows={4} /></div>
+          <div className="bg-[#f59e0b]/10 border border-[#f59e0b]/30 rounded-xl p-4"><p className="text-[#f59e0b] font-medium text-sm mb-1">What happens next:</p><ul className="text-[#92400e] text-xs space-y-1"><li>• Location shared with nearby doctors</li><li>• Doctors within 8km notified</li><li>• Real-time status updates shown here</li><li>• Navigation once accepted</li></ul></div>
+          <button onClick={() => create()} disabled={loading} className="w-full bg-gradient-to-r from-[#ef4444] to-[#f97316] hover:from-[#dc2626] hover:to-[#ea580c] disabled:opacity-50 text-white font-bold py-4 rounded-xl transition-all shadow-lg shadow-[#ef4444]/20">{loading ? "Sending…" : "🆘 SEND EMERGENCY REQUEST"}</button>
+          <button onClick={() => window.open("tel:911", "_self")} className="w-full bg-[#f1f5f9] hover:bg-[#e2e8f0] text-[#475569] py-3 rounded-xl text-sm transition-colors">📞 Or Call Emergency Services</button>
+        </div>
+      </div></div>
+    </div>
+  );
 }
