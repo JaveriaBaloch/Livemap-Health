@@ -19,7 +19,7 @@ export async function GET(req: NextRequest) {
     await dbConnect();
     const { searchParams } = req.nextUrl;
     const userId = searchParams.get("userId");
-    const type = searchParams.get("type"); // public, private, emergency
+    const type = searchParams.get("type");
 
     let query: any = { isActive: true };
 
@@ -135,25 +135,28 @@ export async function PUT(req: NextRequest) {
       console.log("Pusher not configured, skipping realtime");
     }
 
-    return NextResponse.json({ message });
-      // Also notify each participant on their user channel (for badge when chat is closed)
-      try {
-        const chat = await Chat.findById(chatId).select('participants').lean();
-        if (chat?.participants?.length) {
-          const otherParticipants = (chat.participants as any[]).filter(
-            (p: any) => p.toString() !== senderId
-          );
-          for (const participantId of otherParticipants) {
+    // Also notify each participant on their user channel (for badge when chat is closed)
+    try {
+      const chat: any = await Chat.findById(chatId).select("participants").lean();
+      if (chat?.participants?.length) {
+        const otherParticipants = (chat.participants as any[]).filter(
+          (p: any) => p.toString() !== senderId
+        );
+        for (const participantId of otherParticipants) {
+          try {
             await pusher.trigger(`user-${participantId.toString()}`, "new-chat-message", {
               chatId,
               senderName,
               preview: content?.slice(0, 60),
             });
-          }
+          } catch {}
         }
-      } catch (e) {
-        console.log("Pusher user channel notify failed:", e);
       }
+    } catch (e) {
+      console.log("Pusher user channel notify failed:", e);
+    }
+
+    return NextResponse.json({ message });
   } catch (error: any) {
     return NextResponse.json({ error: error.message }, { status: 500 });
   }

@@ -151,7 +151,7 @@ console.log(`Found ${nearbyDoctors.length} potential doctors to notify`);
       }))
     });
 
-  } catch (error) {
+  } catch (error : any) {
     console.error('Emergency creation error:', {
       message: error.message,
       stack: error.stack,

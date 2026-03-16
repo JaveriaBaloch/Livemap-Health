@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 
+declare global {
+  var tempWelcomeOtp: Record<string, { otp: string; otpExpiry: Date }> | undefined;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const { email, otp } = await req.json();
@@ -16,7 +20,7 @@ export async function POST(req: NextRequest) {
     }
 
     if (new Date() > tempOtpData.otpExpiry) {
-      delete global.tempWelcomeOtp[email];
+      delete global.tempWelcomeOtp![email];
       return NextResponse.json({ error: "OTP expired. Please request a new one." }, { status: 400 });
     }
 
@@ -25,7 +29,7 @@ export async function POST(req: NextRequest) {
     }
 
     // Clean up
-    delete global.tempWelcomeOtp[email];
+    delete global.tempWelcomeOtp![email];
 
     return NextResponse.json({ 
       message: "Email verified successfully! Welcome to LiveMap.",
