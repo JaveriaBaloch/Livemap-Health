@@ -326,12 +326,12 @@ export default function EmergencyResponse({ emergency, onBack, onGetDirections, 
                 🏁 {updating ? "Updating…" : "Mark Resolved"}
               </button>
 
-              {/* Call 911 — always active */}
+              {/* Call 144 — always active */}
               <button
-                onClick={() => window.open("tel:911", "_self")}
+                onClick={() => window.open("tel:144", "_self")}
                 className="bg-[#ef4444]/10 text-[#ef4444] py-3.5 rounded-xl text-sm font-medium hover:bg-[#ef4444]/20 transition-colors border border-[#ef4444]/20"
               >
-                🚨 Call 911
+                🚨 Call 144
               </button>
             </div>
           )}
