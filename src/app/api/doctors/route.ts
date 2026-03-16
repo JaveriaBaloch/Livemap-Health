@@ -86,7 +86,8 @@ export async function POST(req: NextRequest) {
     await dbConnect();
     const specializations = await User.distinct("specialization", {
       role: "doctor",
-      specialization: { $ne: null, $ne: "" },
+      specialization: { $nin: [null, ""] },
+
     });
     return NextResponse.json({ specializations });
   } catch (error: any) {

@@ -15,7 +15,7 @@ export async function POST(req: NextRequest) {
         const decoded = jwt.verify(token, process.env.NEXTAUTH_SECRET || "fallback-secret") as any;
         // Update user online status
         await User.findByIdAndUpdate(decoded.userId, { isOnline: false });
-      } catch (error) {
+      } catch (error: any) {
         // Token invalid, but still proceed with logout
         console.log('Invalid token during logout, proceeding anyway');
       }

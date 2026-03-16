@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { sendEmailVerification } from "@/lib/firebase";
 
+export async function POST(req: NextRequest) {
   try {
     const { email } = await req.json();
 
@@ -38,7 +39,9 @@ import { sendEmailVerification } from "@/lib/firebase";
 
     // For demo, we'll store in a global variable or use a simple cache
     // In production, use proper session management
+    // @ts-ignore
     global.tempWelcomeOtp = global.tempWelcomeOtp || {};
+    // @ts-ignore
     global.tempWelcomeOtp[email] = tempUser;
 
     return NextResponse.json({ 

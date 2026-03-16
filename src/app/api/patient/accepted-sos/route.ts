@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
       emergencies: formatted,
       count: formatted.length,
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Patient accepted SOS fetch error:', error);
     return NextResponse.json(
       {

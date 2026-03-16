@@ -115,7 +115,7 @@ export async function GET(request: NextRequest) {
       count: pharmacies.length,
       source: "google_places"
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Get pharmacies error:", error);
     return NextResponse.json(
       { error: "Failed to fetch pharmacies" },

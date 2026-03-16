@@ -88,7 +88,7 @@ export async function GET(request: NextRequest) {
         count: formattedEmergencies.length
       });
 
-    } catch (dbError) {
+    } catch (dbError: any) {
       console.error('API: Database query error:', dbError);
       return NextResponse.json(
         { error: 'Database query failed', details: dbError.message },
@@ -96,7 +96,7 @@ export async function GET(request: NextRequest) {
       );
     }
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('API: Accepted emergencies error:', error);
     console.error('API: Error stack:', error.stack);
     

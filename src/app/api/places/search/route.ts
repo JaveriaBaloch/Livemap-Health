@@ -142,7 +142,7 @@ export async function POST(request: NextRequest) {
       status: 'OK'
     });
 
-  } catch (error) {
+  } catch (error: any) {
     console.error("Places search error:", error);
     return NextResponse.json(
       { error: "Internal server error" },

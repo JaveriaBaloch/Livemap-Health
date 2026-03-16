@@ -50,7 +50,7 @@ export async function GET(request: NextRequest) {
       // Comparison
       dataSource: 'Now using MongoDB as primary source, Map as backup'
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Debug emergency error:', error);
     return NextResponse.json({ 
       error: 'Failed to get emergency data',
