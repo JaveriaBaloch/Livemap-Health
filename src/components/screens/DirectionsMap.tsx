@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { useAppStore } from "@/lib/store";
-import { useEmergencyStatusNotifications } from "@/lib/useEmergencyStatusNotifications";
-import StatusToast from "@/components/ui/StatusToast";
+import { useNotifications } from "@/lib/useNotifications";
+import { NotificationBell } from "@/components/ui/NotificationSidebar";
 import type { Specialist } from "@/types";
 
 interface Props {
@@ -21,20 +21,20 @@ const STATUS_DISPLAY: Record<string, { label: string; color: string; icon: strin
 };
 
 export default function DirectionsMap({ specialist, onBack, emergencyId = null }: Props) {
-  const { currentLocation } = useAppStore();
+  const { currentLocation, user } = useAppStore();
   const [mode, setMode] = useState<"driving" | "walking" | "transit">("driving");
 
-  // Status notifications — only active when emergencyId is provided (patient tracking flow)
-  const {
-    currentStatus,
-    doctorName,
-    notifications: statusNotifs,
-    dismiss: dismissStatus,
-  } = useEmergencyStatusNotifications({
-    emergencyId,
-    enabled: !!emergencyId,
+  // DB notifications — only active when emergencyId + userId are available
+  const { notifications, unreadCount } = useNotifications({
+    userId: user?._id,
+    enabled: !!emergencyId && !!user?._id,
     interval: 4000,
   });
+
+  // Derive current status from latest DB notification for this emergency
+  const statusNotifs = notifications.filter((n) => n.type === "status" && n.emergencyId === emergencyId);
+  const currentStatus = statusNotifs.length > 0 ? statusNotifs[0].status : null;
+  const doctorName = statusNotifs.length > 0 ? statusNotifs[0].fromUserName : null;
 
   const origin = currentLocation ? `${currentLocation.lat},${currentLocation.lng}` : "52.5200,13.4050";
   const dest = `${specialist.geometry.location.lat},${specialist.geometry.location.lng}`;
@@ -44,9 +44,6 @@ export default function DirectionsMap({ specialist, onBack, emergencyId = null }
 
   return (
     <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] flex flex-col">
-      {/* Status toast notifications */}
-      <StatusToast notifications={statusNotifs} onDismiss={dismissStatus} />
-
       {/* Header */}
       <div className="bg-white/80 backdrop-blur-xl border-b border-[#e2e8f0] sticky top-0 z-50 flex-shrink-0">
         <div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center gap-4">
@@ -69,6 +66,8 @@ export default function DirectionsMap({ specialist, onBack, emergencyId = null }
               <span>{statusInfo.label}</span>
             </div>
           )}
+          {/* Notification bell */}
+          {emergencyId && <NotificationBell count={unreadCount} onClick={onBack} />}
         </div>
       </div>
 

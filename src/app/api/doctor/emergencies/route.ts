@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import dbConnect from "@/lib/mongodb";
 import User from "@/models/User";
 import Emergency from "@/models/Emergency";
+import Notification from "@/models/Notification";
 import { activeEmergencies } from "@/lib/emergencyStorage";
 
 const MEDICAL_ROLES = ["doctor", "nurse", "paramedic"];
@@ -229,7 +230,7 @@ export async function POST(request: NextRequest) {
         }
 
         // Verify persistence
-        const verifyEmergency = await Emergency.findById(emergencyId).lean();
+        const verifyEmergency: any = await Emergency.findById(emergencyId).lean();
         if (!verifyEmergency?.acceptedBy) {
           return NextResponse.json({ error: 'Failed to persist emergency acceptance' }, { status: 500 });
         }
@@ -260,6 +261,26 @@ export async function POST(request: NextRequest) {
       }
 
       console.log(`Emergency ${emergencyId} accepted by ${doctor.role} ${doctor.name}`);
+
+      // Create notification for patient
+      const patientId = emergency.reportedBy?.toString() || emergency.userId?.toString();
+      if (patientId) {
+        try {
+          await Notification.create({
+            userId: patientId,
+            type: "status",
+            title: `Dr. ${doctor.name}`,
+            message: `Dr. ${doctor.name} accepted your emergency and is preparing to help`,
+            icon: "✅",
+            color: "#10b981",
+            emergencyId,
+            fromUserId: doctor._id,
+            fromUserName: doctor.name,
+            status: "accepted",
+            read: false,
+          });
+        } catch (e) { console.error("Notification create failed:", e); }
+      }
 
       return NextResponse.json({
         success: true,

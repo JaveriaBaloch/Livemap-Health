@@ -2,9 +2,17 @@ import { NextRequest, NextResponse } from "next/server";
 import dbConnect from "@/lib/mongodb";
 import Emergency from "@/models/Emergency";
 import User from "@/models/User";
+import Notification from "@/models/Notification";
 
 const MEDICAL_ROLES = ["doctor", "nurse", "paramedic"];
 const VALID_STATUSES = ["en-route", "arrived", "resolved", "in-progress"];
+
+const STATUS_NOTIF: Record<string, { icon: string; color: string; msg: (name: string) => string }> = {
+  "en-route": { icon: "🚗", color: "#f59e0b", msg: (n) => `Dr. ${n} is on the way to your location` },
+  arrived:    { icon: "📍", color: "#3b82f6", msg: (n) => `Dr. ${n} has arrived at your location!` },
+  resolved:   { icon: "🏁", color: "#8b5cf6", msg: (n) => `Dr. ${n} marked your case as resolved` },
+  "in-progress": { icon: "🩺", color: "#8b5cf6", msg: (n) => `Dr. ${n} is treating you now` },
+};
 
 export async function POST(request: NextRequest) {
   try {
@@ -39,9 +47,13 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Emergency not found" }, { status: 404 });
     }
 
-    // Verify this doctor is the one who accepted
+    // Verify this doctor is the one who accepted (or is in respondedDoctors)
     const acceptedById = emergency.acceptedBy?.toString();
-    if (acceptedById !== doctorId) {
+    const isResponder = (emergency.respondedDoctors || []).some((d: any) => d?.toString() === doctorId);
+    
+    console.log("Status update auth check:", { acceptedById, doctorId, isResponder, emergencyStatus: emergency.status });
+    
+    if (acceptedById !== doctorId && !isResponder) {
       return NextResponse.json(
         { error: "Only the accepting responder can update status" },
         { status: 403 }
@@ -76,6 +88,33 @@ export async function POST(request: NextRequest) {
     console.log(
       `Emergency ${emergencyId} status updated to "${status}" by ${doctor.role} ${doctor.name}`
     );
+
+    // Create notification for the PATIENT
+    const patientId = emergency.reportedBy?.toString() || emergency.userId?.toString();
+    const notifMeta = STATUS_NOTIF[status];
+    console.log("Notification check:", { patientId, status, hasNotifMeta: !!notifMeta });
+    
+    if (patientId && notifMeta) {
+      try {
+        const notif = await Notification.create({
+          userId: patientId,
+          type: "status",
+          title: `Dr. ${doctor.name}`,
+          message: notifMeta.msg(doctor.name),
+          icon: notifMeta.icon,
+          color: notifMeta.color,
+          emergencyId,
+          fromUserId: doctor._id,
+          fromUserName: doctor.name,
+          status,
+          read: false,
+        });
+        console.log(`Notification created for patient ${patientId}: ${status}`, notif._id);
+      } catch (notifErr) {
+        console.error("Failed to create notification:", notifErr);
+        // Don't fail the status update if notification fails
+      }
+    }
 
     return NextResponse.json({
       success: true,

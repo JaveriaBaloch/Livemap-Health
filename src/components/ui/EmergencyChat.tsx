@@ -9,7 +9,36 @@ export default function EmergencyChat({ emergencyId, otherUserId, otherUserName,
   useEffect(() => { if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight; }, [messages]);
   useEffect(() => { let c = false; (async () => { const my = eid(user?._id), oi = eid(otherUserId), ei = eid(emergencyId); if (!my || !oi || !ei) { setError("Missing info."); setLoading(false); return; } try { const lr = await fetch(`/api/chat?userId=${encodeURIComponent(my)}&type=emergency`); if (!lr.ok) throw 0; const ex = ((await lr.json()).chats || []).find((ch: any) => String(ch.emergencyId) === ei); if (ex?._id) { if (!c) { setChatId(ex._id); await load(ex._id); } setLoading(false); return; } const cr = await fetch("/api/chat", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ type: "emergency", name: `Emergency #${ei.slice(-6)}`, participants: [my, oi], participantNames: [user?.name || "User", otherUserName], emergencyId: ei }) }); const cd = await cr.json(); if (!cr.ok) { setError("Failed."); setLoading(false); return; } if (!c && cd.chat?._id) { setChatId(cd.chat._id); await load(cd.chat._id); } } catch { setError("Unable to open chat."); } finally { if (!c) setLoading(false); } })(); return () => { c = true; }; }, [emergencyId, otherUserId, otherUserName, user, load]);
   useEffect(() => { if (!chatId) return; const i = setInterval(() => load(chatId), 3000); return () => clearInterval(i); }, [chatId, load]);
-  const send = async () => { if (!chatId || !input.trim() || !user?._id) return; await fetch("/api/chat", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId, senderId: eid(user._id), senderName: user.name, senderRole: user.role, content: input.trim(), type: "text" }) }); setInput(""); await load(chatId); };
+  const send = async () => {
+    if (!chatId || !input.trim() || !user?._id) return;
+    const content = input.trim();
+    setInput("");
+    
+    // Send message
+    await fetch("/api/chat", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ chatId, senderId: eid(user._id), senderName: user.name, senderRole: user.role, content, type: "text" }) });
+    
+    // Create notification for the OTHER user
+    try {
+      await fetch("/api/notifications", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          userId: eid(otherUserId),
+          type: "chat",
+          title: user.name || "User",
+          message: content.length > 80 ? content.slice(0, 80) + "…" : content,
+          icon: "💬",
+          color: "#8b5cf6",
+          emergencyId: eid(emergencyId),
+          chatId,
+          fromUserId: eid(user._id),
+          fromUserName: user.name,
+        }),
+      });
+    } catch {}
+    
+    await load(chatId);
+  };
   if (loading) return <div className="bg-[#f1f5f9] rounded-xl p-6 text-center text-[#94a3b8] text-sm">Opening chat…</div>;
   if (error || !chatId) return <div className="bg-[#f1f5f9] rounded-xl p-4 text-center"><p className="text-[#ef4444] text-sm mb-2">{error || "Unable to open chat."}</p><button onClick={onClose} className="text-xs text-[#94a3b8] hover:text-[#1e293b] underline">Close</button></div>;
   return (

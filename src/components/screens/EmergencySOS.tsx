@@ -1,11 +1,9 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "@/lib/store";
-import { useChatNotifications } from "@/lib/useChatNotifications";
-import { useEmergencyStatusNotifications } from "@/lib/useEmergencyStatusNotifications";
+import { useNotifications } from "@/lib/useNotifications";
 import EmergencyChat from "@/components/ui/EmergencyChat";
 import NotificationSidebar, { NotificationBell } from "@/components/ui/NotificationSidebar";
-import StatusToast from "@/components/ui/StatusToast";
 import type { AcceptedDoctor } from "@/types";
 
 interface Props { onBack: () => void; initialAcceptedDoctor?: AcceptedDoctor | null; initialEmergencyId?: string | null; }
@@ -29,9 +27,11 @@ export default function EmergencySOS({ onBack, initialAcceptedDoctor = null, ini
   const [showChat, setShowChat] = useState(false);
   const [sidebar, setSidebar] = useState(false);
 
-  const { notifications, unreadCount, dismissAll, clearUnread } = useChatNotifications({ userId: user?._id, enabled: !!user?._id && !!doctor, interval: 4000 });
+  const { notifications, unreadCount, markRead, markAllRead } = useNotifications({ userId: user?._id, enabled: !!user?._id && !!doctor, interval: 4000 });
 
-  const { currentStatus, notifications: statusNotifs, dismiss: dismissStatus } = useEmergencyStatusNotifications({ emergencyId: eid, enabled: !!eid && !!doctor, interval: 4000 });
+  // Track status from DB notifications
+  const statusNotifs = notifications.filter((n) => n.type === "status" && n.emergencyId === eid);
+  const currentStatus = statusNotifs.length > 0 ? (statusNotifs[0].status || "accepted") : "accepted";
 
   useEffect(() => {
     if (currentStatus === "resolved" && doctor) {
@@ -84,8 +84,7 @@ export default function EmergencySOS({ onBack, initialAcceptedDoctor = null, ini
 
     return (
       <div className="min-h-screen bg-[#f8fafc] text-[#1e293b] flex flex-col">
-        <StatusToast notifications={statusNotifs} onDismiss={dismissStatus} />
-        <NotificationSidebar open={sidebar} onClose={() => setSidebar(false)} notifications={notifications} onNotificationClick={() => { setSidebar(false); clearUnread(); setShowChat(true); }} onClearAll={dismissAll} unreadCount={unreadCount} />
+        <NotificationSidebar open={sidebar} onClose={() => setSidebar(false)} notifications={notifications} unreadCount={unreadCount} onNotificationClick={() => { setSidebar(false); setShowChat(true); }} onMarkRead={markRead} onMarkAllRead={markAllRead} />
 
         {/* Header */}
         <div className="bg-[#ef4444]/5 backdrop-blur-xl border-b border-[#ef4444]/20 sticky top-0 z-50 flex-shrink-0">
@@ -154,7 +153,7 @@ export default function EmergencySOS({ onBack, initialAcceptedDoctor = null, ini
               <div className="max-w-6xl mx-auto grid grid-cols-2 md:grid-cols-4 gap-3">
                 <button onClick={() => window.open(`tel:${doctor.phone || "911"}`, "_self")} className="bg-[#10b981] hover:bg-[#059669] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors">📞 Call Doctor</button>
                 <button onClick={() => { if (hasLoc && currentLocation) window.open(`https://www.google.com/maps/dir/?api=1&origin=${currentLocation.lat},${currentLocation.lng}&destination=${doctor.location!.lat},${doctor.location!.lng}&travelmode=driving`, "_blank"); else alert("Not available"); }} className="bg-[#3b82f6] hover:bg-[#2563eb] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors">📍 Open Map</button>
-                <button onClick={() => { clearUnread(); setShowChat(true); }} className={`bg-[#8b5cf6] hover:bg-[#7c3aed] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors relative ${unreadCount > 0 ? "ring-2 ring-[#8b5cf6]/30" : ""}`}>💬 Chat{unreadCount > 0 && <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#ef4444] text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-white">{unreadCount}</span>}</button>
+                <button onClick={() => { markAllRead(); setShowChat(true); }} className={`bg-[#8b5cf6] hover:bg-[#7c3aed] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors relative ${unreadCount > 0 ? "ring-2 ring-[#8b5cf6]/30" : ""}`}>💬 Chat{unreadCount > 0 && <span className="absolute -top-1.5 -right-1.5 w-5 h-5 bg-[#ef4444] text-white text-[10px] font-bold rounded-full flex items-center justify-center ring-2 ring-white">{unreadCount}</span>}</button>
                 <button onClick={() => window.open("tel:911", "_self")} className="bg-[#ef4444] hover:bg-[#dc2626] text-white py-3.5 px-4 rounded-xl text-sm font-medium transition-colors">🚨 Call 911</button>
               </div>
             </div>
@@ -176,7 +175,6 @@ export default function EmergencySOS({ onBack, initialAcceptedDoctor = null, ini
     const acc = responding.find((d: any) => d.status === "accepted");
     return (
       <div className="min-h-screen bg-[#f8fafc] text-[#1e293b]">
-        <StatusToast notifications={statusNotifs} onDismiss={dismissStatus} />
         <div className="bg-[#ef4444]/5 border-b border-[#ef4444]/20 sticky top-0 z-50"><div className="max-w-6xl mx-auto px-4 py-3.5 flex items-center gap-3"><div className="w-2.5 h-2.5 bg-[#ef4444] rounded-full animate-pulse" /><h1 className="font-bold text-lg font-[Outfit]">Emergency Active</h1></div></div>
         <div className="max-w-4xl mx-auto px-4 py-8">
           <div className="bg-white rounded-2xl p-8 text-center mb-6 border border-[#e2e8f0] shadow-sm"><div className="w-20 h-20 bg-[#ef4444]/10 rounded-2xl flex items-center justify-center mx-auto mb-6 animate-glow"><svg className="w-10 h-10 text-[#ef4444]" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.732-.833-2.5 0L4.314 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg></div><h2 className="text-2xl font-bold font-[Outfit] mb-3">Request Sent</h2><p className="text-[#475569] mb-4">&quot;{msg}&quot;</p><div className="bg-[#f1f5f9] rounded-xl p-4 text-sm text-[#475569]">🚨 Searching…<br/>📍 Location shared<br/>⏱️ Waiting</div></div>

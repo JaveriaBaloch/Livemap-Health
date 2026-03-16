@@ -1,14 +1,14 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "@/lib/store";
-import { useChatNotifications } from "@/lib/useChatNotifications";
+import { useNotifications } from "@/lib/useNotifications";
 import NotificationSidebar, { NotificationBell } from "@/components/ui/NotificationSidebar";
 import type { EmergencyData } from "@/types";
 
 interface Props {
   onAcceptEmergency: (e: EmergencyData) => void;
   onGetDirections: (e: EmergencyData) => void;
-  onViewAccepted: (e: EmergencyData) => void;
+  onViewAccepted: (e: EmergencyData, openChat?: boolean) => void;
   onOpenProfile: () => void;
 }
 
@@ -25,7 +25,7 @@ export default function DoctorDashboard({ onAcceptEmergency, onGetDirections, on
   const roleLabel = user?.role === "doctor" ? "Doctor" : user?.role === "nurse" ? "Nurse" : user?.role === "paramedic" ? "Paramedic" : "Medical Staff";
   const namePrefix = user?.role === "doctor" ? "Dr. " : "";
 
-  const { notifications, unreadCount, dismissAll, clearUnread } = useChatNotifications({
+  const { notifications, unreadCount, markRead, markAllRead } = useNotifications({
     userId: user?._id,
     enabled: !!user?._id && isMedical,
     interval: 5000,
@@ -133,14 +133,26 @@ export default function DoctorDashboard({ onAcceptEmergency, onGetDirections, on
         open={sidebar}
         onClose={() => setSidebar(false)}
         notifications={notifications}
-        onNotificationClick={(n) => {
-          setSidebar(false);
-          clearUnread();
-          const m = acc.find((e) => e.id === n.emergencyId);
-          if (m) onViewAccepted(m);
-        }}
-        onClearAll={dismissAll}
         unreadCount={unreadCount}
+        onNotificationClick={async (n) => {
+          setSidebar(false);
+          let m = acc.find((e) => e.id === n.emergencyId);
+          
+          if (!m && n.emergencyId) {
+            try {
+              const r = await fetch(`/api/doctor/accepted-emergencies?doctorId=${user?._id}`);
+              if (r.ok) {
+                const data = (await r.json()).emergencies || [];
+                setAcc(data);
+                m = data.find((e: any) => e.id === n.emergencyId);
+              }
+            } catch {}
+          }
+          
+          if (m) onViewAccepted(m, n.type === "chat");
+        }}
+        onMarkRead={markRead}
+        onMarkAllRead={markAllRead}
       />
 
       {/* Header */}
@@ -234,7 +246,7 @@ export default function DoctorDashboard({ onAcceptEmergency, onGetDirections, on
                   <div
                     key={em.id || i}
                     className="bg-[#f8fafc] hover:bg-[#f1f5f9] border border-[#e2e8f0] rounded-xl p-4 transition-all hover:border-[#3b82f6]/40 cursor-pointer"
-                    onClick={() => { clearUnread(); onViewAccepted(em); }}
+                    onClick={() => { markAllRead(); onViewAccepted(em); }}
                   >
                     <div className="flex items-center gap-3 mb-3">
                       <div className="w-10 h-10 bg-[#ef4444]/10 rounded-full flex items-center justify-center">
