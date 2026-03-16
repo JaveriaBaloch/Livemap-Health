@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useAppStore } from "@/lib/store";
-import { useChatNotifications } from "@/lib/useChatNotifications";
+import { useNotifications } from "@/lib/useNotifications";
 import EmergencyChat from "@/components/ui/EmergencyChat";
 import NotificationSidebar, { NotificationBell } from "@/components/ui/NotificationSidebar";
 import type { EmergencyData } from "@/types";
@@ -11,6 +11,7 @@ interface Props {
   emergency: EmergencyData;
   onBack: () => void;
   onGetDirections: (e: EmergencyData) => void;
+  autoOpenChat?: boolean;
 }
 
 const STATUS_STEPS = [
@@ -20,15 +21,20 @@ const STATUS_STEPS = [
   { key: "resolved", label: "Resolved", icon: "🏁", color: "#8b5cf6" },
 ];
 
-export default function EmergencyResponse({ emergency, onBack, onGetDirections }: Props) {
+export default function EmergencyResponse({ emergency, onBack, onGetDirections, autoOpenChat = false }: Props) {
   const { user } = useAppStore();
-  const [showChat, setShowChat] = useState(false);
+  const [showChat, setShowChat] = useState(autoOpenChat);
   const [sidebar, setSidebar] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState(emergency.status || "accepted");
+  // Normalize status for the stepper (DB may store "responded" which maps to "accepted")
+  const normalizeStatus = (s?: string) => {
+    if (!s || s === "responded" || s === "active") return "accepted";
+    return s;
+  };
+  const [currentStatus, setCurrentStatus] = useState(normalizeStatus(emergency.status));
   const [updating, setUpdating] = useState(false);
   const [statusError, setStatusError] = useState("");
 
-  const { notifications, unreadCount, dismissAll, clearUnread } = useChatNotifications({
+  const { notifications, unreadCount, markRead, markAllRead } = useNotifications({
     userId: user?._id,
     enabled: !!user?._id,
     interval: 4000,
@@ -37,7 +43,14 @@ export default function EmergencyResponse({ emergency, onBack, onGetDirections }
   const phone = emergency.phoneNumber || emergency.reporterPhone;
 
   const updateStatus = async (newStatus: string) => {
-    if (!user?._id || !emergency.id) return;
+    const emId = emergency.id || (emergency as any)._id;
+    console.log("updateStatus called:", { newStatus, emId, userId: user?._id, emergency });
+    
+    if (!user?._id || !emId) {
+      console.error("Cannot update status - missing:", { userId: user?._id, emId });
+      setStatusError("Missing emergency or user ID");
+      return;
+    }
 
     if (newStatus === "resolved" && !confirm("Mark this emergency as resolved?")) return;
 
@@ -49,7 +62,7 @@ export default function EmergencyResponse({ emergency, onBack, onGetDirections }
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          emergencyId: emergency.id,
+          emergencyId: emId,
           doctorId: user._id,
           status: newStatus,
         }),
@@ -83,9 +96,10 @@ export default function EmergencyResponse({ emergency, onBack, onGetDirections }
         open={sidebar}
         onClose={() => setSidebar(false)}
         notifications={notifications}
-        onNotificationClick={() => { setSidebar(false); clearUnread(); setShowChat(true); }}
-        onClearAll={dismissAll}
         unreadCount={unreadCount}
+        onNotificationClick={() => { setSidebar(false); markAllRead(); setShowChat(true); }}
+        onMarkRead={markRead}
+        onMarkAllRead={markAllRead}
       />
 
       {/* Header */}
@@ -134,7 +148,7 @@ export default function EmergencyResponse({ emergency, onBack, onGetDirections }
                     }`}
                     style={
                       isCompleted
-                        ? { background: `${step.color}15`, color: step.color, ringColor: `${step.color}20` }
+                        ? { background: `${step.color}15`, color: step.color, boxShadow: `0 0 0 4px ${step.color}20` }
                         : {}
                     }
                   >
@@ -175,8 +189,8 @@ export default function EmergencyResponse({ emergency, onBack, onGetDirections }
           </button>
           <button
             onClick={() => {
-              if (!emergency.id || !emergency.patientId) { alert("Not available"); return; }
-              clearUnread();
+              if (!(emergency.id || (emergency as any)._id) || !emergency.patientId) { alert("Not available"); return; }
+              markAllRead();
               setShowChat(true);
             }}
             className={`bg-[#8b5cf6] hover:bg-[#7c3aed] text-white py-4 px-5 rounded-2xl flex items-center justify-center gap-3 transition-colors shadow-md shadow-[#8b5cf6]/10 relative ${unreadCount > 0 ? "ring-2 ring-[#8b5cf6]/30" : ""}`}
@@ -194,9 +208,9 @@ export default function EmergencyResponse({ emergency, onBack, onGetDirections }
         </div>
 
         {/* Chat */}
-        {showChat && emergency.id && emergency.patientId && (
+        {showChat && (emergency.id || (emergency as any)._id) && emergency.patientId && (
           <EmergencyChat
-            emergencyId={emergency.id}
+            emergencyId={emergency.id || (emergency as any)._id}
             otherUserId={emergency.patientId}
             otherUserName={emergency.patientName || "Patient"}
             onClose={() => setShowChat(false)}
