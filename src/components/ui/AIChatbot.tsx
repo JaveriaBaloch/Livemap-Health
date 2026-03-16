@@ -306,7 +306,7 @@ export default function AIChatbot({ onNavigateSOS, onNavigateDoctors, onNavigate
             {/* Disclaimer */}
             <div className="bg-[#f8fafc] border-t border-[#e2e8f0] px-4 py-1.5 flex-shrink-0">
               <p className="text-[10px] text-[#94a3b8] text-center">
-                MediBot is not a doctor. For emergencies, use SOS or call 911.
+                MediBot is not a doctor. For emergencies, use SOS or call 144.
               </p>
             </div>
           </div>
