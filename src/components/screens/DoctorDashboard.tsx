@@ -278,7 +278,6 @@ export default function DoctorDashboard({ onAcceptEmergency, onGetDirections, on
               </div>
             )}
           </div>
-
           {/* Resolved Cases */}
           <div className="bg-white rounded-2xl border border-[#e2e8f0] shadow-sm overflow-hidden">
             <button
