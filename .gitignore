@@ -8,3 +8,4 @@ ios/
 *.apk
 .DS_Store
 .env*
+.env*
