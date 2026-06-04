@@ -209,8 +209,8 @@ Restrict the API key to your domain in production.
 ### Installation
 
 ```bash
-git clone https://github.com/your-username/livemap-emergency.git
-cd livemap-emergency
+git clone https://github.com/JaveriaBaloch/Livemap-Health.git
+cd Livemap-Health
 npm install
 ```
 
